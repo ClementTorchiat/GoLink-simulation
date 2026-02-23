@@ -7,7 +7,6 @@ let buses = [];
 let missions = [];
 let depotNode;
 
-// Les tailles de modules disponibles
 const MODULE_CAPACITIES = [4, 6, 10, 12];
 
 function setup() {
@@ -32,7 +31,6 @@ function setup() {
     }
 
     removeRoadsWhileConnected(0.35);
-
     depotNode = grid[0][0];
 
     for (let i = 0; i < 8; i++) {
@@ -48,6 +46,7 @@ function setup() {
 function draw() {
     background(240);
 
+    // 1. Rendu du Graphe
     stroke(200);
     strokeWeight(15);
     for (let i = 0; i < cols; i++) {
@@ -75,31 +74,30 @@ function draw() {
     textSize(16);
     text("P", depotNode.x, depotNode.y);
 
+    // 2. Rendu des Missions
     for (let m of missions) {
-        if (m.status === 'waiting' || m.status === 'assigned' || m.status === 'partially_assigned') {
+        // La destination (Carré rouge) reste toujours affichée tant que la mission n'est pas finie
+        fill(231, 76, 60);
+        rectMode(CENTER);
+        rect(m.end.x, m.end.y, 12, 12);
+
+        // S'il reste des gens à l'arrêt, on affiche le cercle jaune
+        if (m.waiting > 0) {
             fill(241, 196, 15);
             circle(m.start.x, m.start.y, 20);
 
             fill(0);
             textSize(12);
             textAlign(CENTER, CENTER);
-            text(m.passengersLeft, m.start.x, m.start.y - 20);
+            text(m.waiting, m.start.x, m.start.y - 20);
 
-            fill(231, 76, 60);
-            rectMode(CENTER);
-            rect(m.end.x, m.end.y, 12, 12);
-
-            stroke(241, 196, 15, 150);
-            strokeWeight(3);
+            // Ligne pointillée indicative de la demande
+            stroke(241, 196, 15, 100);
+            strokeWeight(2);
             drawingContext.setLineDash([5, 5]);
             line(m.start.x, m.start.y, m.end.x, m.end.y);
             drawingContext.setLineDash([]);
             noStroke();
-        }
-        else if (m.status === 'picked_up') {
-            fill(231, 76, 60);
-            rectMode(CENTER);
-            rect(m.end.x, m.end.y, 12, 12);
         }
     }
 
@@ -107,14 +105,14 @@ function draw() {
 
     for (let bus of buses) bus.updateMovement();
     for (let bus of buses) bus.checkFusion();
-
-    // CORRECTION DU BUG VISUEL (LE DOUBLE RENDU)
-    for (let bus of buses) bus.showBody();   // 1. On peint tout le monde
-    for (let bus of buses) bus.showLabel();  // 2. On écrit le texte par-dessus tout le monde
+    handleInternalTransfers();
+    for (let bus of buses) bus.showBody();
+    for (let bus of buses) bus.showLabel();
 
     updateUI();
 }
 
+// ... (Les fonctions removeRoadsWhileConnected et isConnected restent identiques)
 function removeRoadsWhileConnected(percentage) {
     let edges = [];
     for (let i = 0; i < cols; i++) {
@@ -143,7 +141,6 @@ function removeRoadsWhileConnected(percentage) {
         }
     }
 }
-
 function isConnected() {
     let startNode = grid[0][0];
     let visited = new Set();
@@ -167,7 +164,7 @@ function updateUI() {
     let fusedModulesCount = 0;
 
     for (let bus of buses) {
-        if (bus.currentMission === null) idleCount++;
+        if (bus.missionsToPickup.length === 0 && bus.missionsToDropoff.length === 0) idleCount++;
         else activeCount++;
         if (bus.isFused) fusedModulesCount++;
     }
@@ -180,58 +177,53 @@ function updateUI() {
 function spawnRandomMission() {
     let startNode = grid[floor(random(cols))][floor(random(rows))];
     let endNode = grid[floor(random(cols))][floor(random(rows))];
-    while(endNode === startNode) {
-        endNode = grid[floor(random(cols))][floor(random(rows))];
-    }
+    while(endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
 
     let groupSize = floor(random(1, 20));
 
+    // NOUVELLE STRUCTURE DE MISSION
     missions.push({
         start: startNode,
         end: endNode,
-        totalPassengers: groupSize,
-        passengersLeft: groupSize,
-        assignedCapacity: 0,
-        status: 'waiting'
+        total: groupSize,
+        waiting: groupSize,  // Personnes à l'arrêt
+        assigned: 0,         // Places réservées dans des bus en route
+        inTransit: 0         // Personnes actuellement dans un bus
     });
 }
 
-// --- L'IA DE DISPATCH (Optimisation Distance + Capacité) ---
+// --- L'IA DE DISPATCH COVOITURAGE (Ridepooling) ---
 function dispatchMissions() {
     for (let m of missions) {
-        let needed = m.passengersLeft - m.assignedCapacity;
+        let needed = m.waiting - m.assigned;
 
-        // S'il y a des gens en attente et qu'il faut encore des places
-        if ((m.status === 'waiting' || m.status === 'partially_assigned') && needed > 0) {
-
+        if (needed > 0) {
             let bestBus = null;
-            let bestScore = Infinity; // Le score le plus bas gagne !
+            let bestScore = Infinity;
 
             for (let bus of buses) {
-                // On ne regarde que les bus libres
-                if (bus.currentMission === null) {
-                    let d = heuristic(bus.currentNode, m.start); // Distance
-                    let capacity = bus.maxCapacity;
-                    let score = 0;
+                // Espace totalement libre (non réservé)
+                let available = bus.maxCapacity - bus.currentPassengers - bus.reservedSeats;
 
-                    // 1. Poids de la distance (Plus c'est loin, plus la note monte)
-                    score += d;
+                if (available > 0) {
+                    let take = min(needed, available);
+                    let d = heuristic(bus.currentNode, m.start);
+                    let score = d;
 
-                    // 2. Poids de la capacité
-                    if (capacity >= needed) {
-                        // Le bus est assez grand pour finir le travail. C'est bien !
-                        // Mais on pénalise un peu s'il est TROP grand, pour éviter le gaspillage.
-                        let wastedSeats = capacity - needed;
-                        score += wastedSeats * 2;
-                    } else {
-                        // Le bus est trop petit. Ça va forcer l'envoi d'un 2ème bus. C'est mauvais !
-                        // On ajoute une grosse pénalité de base (+50)
-                        // Et on pénalise encore plus s'il est VRAIMENT trop petit par rapport à la demande.
-                        let unfulfilled = needed - capacity;
-                        score += 50 + (unfulfilled * 5);
+                    // Pénalité si le bus a DEJA des missions
+                    if (bus.missionsToPickup.length > 0 || bus.missionsToDropoff.length > 0) {
+                        score += 15; // On préfère réveiller un bus au dépôt
+
+                        // CALCUL DU DÉTOUR : Le bus passe-t-il par là ?
+                        if (bus.targetNode) {
+                            let detour = (heuristic(bus.currentNode, m.start) + heuristic(m.start, bus.targetNode)) - heuristic(bus.currentNode, bus.targetNode);
+                            score += detour * 3; // Grosse pénalité si c'est à l'opposé de sa route !
+                        }
                     }
 
-                    // Le bus avec le score le plus bas (le plus optimisé) gagne !
+                    if (take < needed) score += 50 + ((needed - take) * 5);
+                    else if (take < available) score += (available - take) * 2;
+
                     if (score < bestScore) {
                         bestScore = score;
                         bestBus = bus;
@@ -239,26 +231,107 @@ function dispatchMissions() {
                 }
             }
 
-            // On envoie le vainqueur
             if (bestBus) {
-                bestBus.assignMission(m);
-                m.assignedCapacity += bestBus.maxCapacity;
+                let available = bestBus.maxCapacity - bestBus.currentPassengers - bestBus.reservedSeats;
+                let take = min(needed, available);
 
-                // Vérifier si l'essaim déployé est suffisant
-                if (m.assignedCapacity >= m.passengersLeft) {
-                    m.status = 'assigned';
-                } else {
-                    m.status = 'partially_assigned'; // La boucle recommencera pour envoyer un autre bus !
-                }
+                // On ajoute une sous-mission au bus
+                bestBus.missionsToPickup.push({
+                    parent: m,
+                    start: m.start,
+                    end: m.end,
+                    count: take
+                });
+
+                bestBus.reservedSeats += take;
+                m.assigned += take;
+
+                // Le bus recalcule immédiatement sa meilleure route !
+                bestBus.updateTarget();
             }
         }
     }
 }
 
-// --- LA CLASSE BUS ---
-// --- LA CLASSE BUS ---
-// --- LA CLASSE BUS (AVEC ROTATION, PLATOONING ET UI AVANCÉE) ---
-// --- LA CLASSE BUS (CORRECTION DES BUGS FANTÔME ET JITTERING) ---
+// --- LE CERVEAU DE L'ESSAIM : TRANSFERT INTERNE ---
+function handleInternalTransfers() {
+    let processed = new Set();
+
+    for (let bus of buses) {
+        if (bus.isFused && !processed.has(bus)) {
+            // On récupère tout le convoi
+            let convoy = bus.getConvoy();
+            convoy.forEach(b => processed.add(b)); // On les marque comme traités
+
+            if (convoy.length > 1) {
+                optimizeConvoyTransfers(convoy);
+            }
+        }
+    }
+}
+
+function optimizeConvoyTransfers(convoy) {
+    let allDropoffs = [];
+    let totalPass = 0;
+
+    // 1. On met tous les passagers du convoi dans un pot commun
+    for (let b of convoy) {
+        allDropoffs.push(...b.missionsToDropoff);
+        totalPass += b.currentPassengers;
+    }
+
+    if (totalPass === 0) return; // Convoi vide, rien à faire
+
+    // 2. On trie les bus par pertinence.
+    // Priorité absolue aux bus qui doivent aller chercher des gens ! Ensuite, priorité aux gros bus.
+    let sortedBuses = [...convoy].sort((a, b) => {
+        let scoreA = (a.missionsToPickup.length > 0 ? 1000 : 0) + a.maxCapacity;
+        let scoreB = (b.missionsToPickup.length > 0 ? 1000 : 0) + b.maxCapacity;
+        return scoreB - scoreA;
+    });
+
+    // 3. On prépare la nouvelle répartition
+    let newAssignments = new Map();
+    for (let b of sortedBuses) newAssignments.set(b, { missions: [], passengers: 0 });
+
+    // On trie les groupes de passagers par taille pour bien remplir
+    allDropoffs.sort((a, b) => b.count - a.count);
+
+    // 4. On remplit les bus prioritaires jusqu'à ras bord !
+    for (let sm of allDropoffs) {
+        for (let b of sortedBuses) {
+            let assignment = newAssignments.get(b);
+            if (assignment.passengers + sm.count <= b.maxCapacity) {
+                assignment.missions.push(sm);
+                assignment.passengers += sm.count;
+                break; // Groupe placé, on passe au suivant
+            }
+        }
+    }
+
+    // 5. On vérifie si ce transfert a permis de libérer un bus
+    let changed = false;
+    for (let b of sortedBuses) {
+        if (b.currentPassengers !== newAssignments.get(b).passengers) {
+            changed = true;
+            break;
+        }
+    }
+
+    // 6. Si on a pu optimiser, on applique les changements et on recalcule les GPS !
+    if (changed) {
+        for (let b of sortedBuses) {
+            let assignment = newAssignments.get(b);
+            b.missionsToDropoff = assignment.missions;
+            b.currentPassengers = assignment.passengers;
+
+            // MAGIE : Le bus recalcule son GPS. S'il est vide, il rentrera au dépôt à la prochaine intersection !
+            b.updateTarget();
+        }
+        console.log("🔄 Transfert interne réussi ! Compaction du convoi.");
+    }
+}
+// --- LA NOUVELLE CLASSE BUS (WAYPOINTS & NEAREST NEIGHBOR) ---
 class Bus {
     constructor(startNode, maxCapacity) {
         this.currentNode = startNode;
@@ -266,7 +339,6 @@ class Bus {
         this.progress = 0;
         this.speed = 0.02;
         this.path = [];
-        this.currentMission = null;
         this.state = 'IDLE';
         this.isFused = false;
         this.currentX = startNode.x;
@@ -275,12 +347,12 @@ class Bus {
         this.maxCapacity = maxCapacity;
         this.currentPassengers = 0;
         this.visualLength = 18 + (this.maxCapacity * 2);
-    }
 
-    assignMission(mission) {
-        this.currentMission = mission;
-        this.state = 'GOING_TO_PICKUP';
-        this.setDestination(mission.start);
+        // NOUVEAU : Le cerveau multi-tâches !
+        this.missionsToPickup = [];
+        this.missionsToDropoff = [];
+        this.reservedSeats = 0;
+        this.targetNode = null; // Sa prochaine étape immédiate
     }
 
     setDestination(target) {
@@ -293,55 +365,80 @@ class Bus {
         }
     }
 
+    // L'ALGORITHME DU PLUS PROCHE VOISIN (Nearest Neighbor)
+    updateTarget() {
+        let nearestNode = null;
+        let recordDist = Infinity;
+
+        // 1. Regarder tous les points de collecte
+        for (let sm of this.missionsToPickup) {
+            let d = heuristic(this.currentNode, sm.start);
+            if (d < recordDist) { recordDist = d; nearestNode = sm.start; }
+        }
+        // 2. Regarder tous les points de dépôt
+        for (let sm of this.missionsToDropoff) {
+            let d = heuristic(this.currentNode, sm.end);
+            if (d < recordDist) { recordDist = d; nearestNode = sm.end; }
+        }
+
+        // On se dirige vers le plus proche !
+        if (nearestNode) {
+            if (this.targetNode !== nearestNode) {
+                this.targetNode = nearestNode;
+                this.setDestination(this.targetNode);
+            }
+        } else {
+            // Plus de missions = retour au dépôt
+            this.targetNode = depotNode;
+            this.setDestination(depotNode);
+        }
+
+        // Mise à jour de la couleur/état
+        if (this.missionsToDropoff.length > 0) this.state = 'CARRYING';
+        else if (this.missionsToPickup.length > 0) this.state = 'GOING_TO_PICKUP';
+        else if (this.currentNode !== depotNode) this.state = 'RETURNING';
+        else this.state = 'IDLE';
+    }
+
     updateMovement() {
         if (!this.nextNode) {
-            if (this.currentMission) {
-                if (this.state === 'GOING_TO_PICKUP' && this.currentNode === this.currentMission.start) {
-                    let spaceAvailable = this.maxCapacity - this.currentPassengers;
-                    let peopleToTake = min(spaceAvailable, this.currentMission.passengersLeft);
+            let changed = false;
 
-                    this.currentPassengers += peopleToTake;
-                    this.currentMission.passengersLeft -= peopleToTake;
-
-                    // CORRECTION DU BUG 1 : On diminue la capacité réservée par ce bus pour ne pas spammer d'autres bus
-                    this.currentMission.assignedCapacity -= this.maxCapacity;
-                    if (this.currentMission.assignedCapacity < 0) this.currentMission.assignedCapacity = 0;
-
-                    // CORRECTION DU BUG FANTÔME : Si on arrive et qu'un autre bus a déjà tout pris !
-                    if (peopleToTake === 0 && this.currentPassengers === 0) {
-                        this.currentMission = null; // On abandonne la mission
-                        this.state = 'RETURNING'; // Retour à la base
-                        this.setDestination(depotNode);
-                        this.currentX = this.currentNode.x;
-                        this.currentY = this.currentNode.y;
-                        return; // On arrête l'action ici
-                    }
-
-                    this.state = 'CARRYING';
-                    this.setDestination(this.currentMission.end);
-
-                    if (this.currentMission.passengersLeft <= 0) {
-                        this.currentMission.status = 'picked_up';
-                    }
-                }
-                else if (this.state === 'CARRYING' && this.currentNode === this.currentMission.end) {
-                    this.currentPassengers = 0;
-                    if (this.currentMission.passengersLeft <= 0) {
-                        this.currentMission.status = 'completed';
-                        missions = missions.filter(m => m.status !== 'completed');
-                    }
-                    this.currentMission = null;
-                    this.state = 'RETURNING';
-                    this.setDestination(depotNode);
-                }
-            } else {
-                if (this.currentNode !== depotNode) {
-                    this.state = 'RETURNING';
-                    this.setDestination(depotNode);
-                } else {
-                    this.state = 'IDLE';
+            // 1. DÉPOSE DES PASSAGERS (On le fait en premier pour libérer de la place)
+            for (let i = this.missionsToDropoff.length - 1; i >= 0; i--) {
+                let sm = this.missionsToDropoff[i];
+                if (this.currentNode === sm.end) {
+                    this.currentPassengers -= sm.count;
+                    sm.parent.inTransit -= sm.count;
+                    this.missionsToDropoff.splice(i, 1);
+                    changed = true;
                 }
             }
+
+            // 2. PRISE DES PASSAGERS
+            for (let i = this.missionsToPickup.length - 1; i >= 0; i--) {
+                let sm = this.missionsToPickup[i];
+                if (this.currentNode === sm.start) {
+                    this.currentPassengers += sm.count;
+                    this.reservedSeats -= sm.count;
+
+                    sm.parent.waiting -= sm.count;
+                    sm.parent.assigned -= sm.count;
+                    sm.parent.inTransit += sm.count;
+
+                    // La mission passe dans la liste "à déposer"
+                    this.missionsToPickup.splice(i, 1);
+                    this.missionsToDropoff.push(sm);
+                    changed = true;
+                }
+            }
+
+            // On nettoie les missions globales totalement terminées
+            missions = missions.filter(m => m.waiting > 0 || m.inTransit > 0);
+
+            // On cherche la prochaine destination !
+            this.updateTarget();
+
             this.currentX = this.currentNode.x;
             this.currentY = this.currentNode.y;
             return;
@@ -381,52 +478,59 @@ class Bus {
                     this.isFused = true;
                 }
 
-                // CORRECTION DU BUG DE TREMBLEMENT (JITTERING)
                 if (sameEdge && this.progress < other.progress) {
                     let progressOffset = idealDist / spacing;
                     let targetProgress = other.progress - progressOffset;
 
                     if (this.progress < targetProgress - 0.01) {
                         wantsToAccelerate = true;
-                        targetLimit = max(0, targetProgress); // Sécurité pour ne pas le traverser !
+                        targetLimit = max(0, targetProgress);
                     } else if (this.progress >= targetProgress - 0.01 && this.progress <= other.progress) {
-                        lockProgress = max(0, targetProgress); // Verrouillage parfait sans recul
+                        lockProgress = max(0, targetProgress);
                     }
                 }
                 else if (iAmFollowing) {
-                    // Calcul physique dans les virages
                     let distFrontBus = other.progress * spacing;
                     let distBackBus = (1 - this.progress) * spacing;
                     let currentPhysicalDist = distFrontBus + distBackBus;
 
                     if (currentPhysicalDist < idealDist) {
-                        lockProgress = this.progress; // Frein à main ! (Il gèle sa position pour ne pas rentrer dedans)
+                        lockProgress = this.progress;
                     } else if (currentPhysicalDist > idealDist + 2) {
-                        wantsToAccelerate = true; // Il accélère pour ne pas perdre le convoi
+                        wantsToAccelerate = true;
                     }
                 }
             }
         }
 
-        // Application lissée de la vitesse
         if (lockProgress !== -1) {
             this.progress = lockProgress;
         } else if (wantsToAccelerate) {
             this.progress += 0.015;
-            // Si on accélère trop d'un coup, on rabote pour s'arrêter pile au bon endroit
             if (targetLimit !== undefined && this.progress > targetLimit) {
                 this.progress = targetLimit;
             }
         }
     }
 
-    // (La suite des fonctions showBody et showLabel reste identique à avant)
+    // (à mettre dans la class Bus)
+    getConvoy() {
+        // Retourne tous les bus proches (200px) qui partagent la même route que moi
+        return buses.filter(b =>
+            b.isFused &&
+            dist(this.currentX, this.currentY, b.currentX, b.currentY) < 200 &&
+            (b.nextNode === this.nextNode || b.currentNode === this.nextNode || this.currentNode === b.nextNode)
+        );
+    }
     showBody() {
-        if (this.state === 'CARRYING' && this.currentMission) {
-            stroke(46, 204, 113, 150);
+        // Dessine la ligne vers sa PROCHAINE étape
+        if (this.targetNode && this.targetNode !== depotNode) {
+            if (this.state === 'CARRYING') stroke(46, 204, 113, 150); // Vert
+            else stroke(52, 152, 219, 150); // Bleu
+
             strokeWeight(3);
             drawingContext.setLineDash([5, 5]);
-            line(this.currentX, this.currentY, this.currentMission.end.x, this.currentMission.end.y);
+            line(this.currentX, this.currentY, this.targetNode.x, this.targetNode.y);
             drawingContext.setLineDash([]);
             noStroke();
         }
@@ -492,7 +596,6 @@ class Bus {
     }
 }
 
-// --- FONCTIONS EXISTANTES A* ---
 function aStar(start, end) {
     let openSet = [start];
     let closedSet = [];
