@@ -11,10 +11,25 @@
 <div id="app-container">
     <div id="left-panel">
         <div id="ui-panel">
-            <h1>Vue Satellite</h1>
+            <h1>Centre de Contrôle</h1>
+
+            <div id="clock-display">05:00</div>
+            <div id="mode-controls">
+                <button id="btn-manual" class="active">✋ Mode Manuel</button>
+                <button id="btn-auto">🤖 Mode Automatique</button>
+            </div>
+
+            <div id="time-controls">
+                <button id="btn-pause" title="Pause">⏸️</button>
+                <button id="btn-x1" class="active" title="Vitesse x1">▶️ x1</button>
+                <button id="btn-x2" title="Vitesse x2">⏩ x2</button>
+                <button id="btn-x5" title="Vitesse x5">⏭️ x5</button>
+            </div>
+
             <div id="stats-panel">
-                <p>🚐 Flotte globale : <span id="stat-idle">0</span> au dépôt | <span id="stat-active">0</span> en route</p>
+                <p>🚐 Flotte globale : <span id="stat-idle">0</span> au repos | <span id="stat-active">0</span> en route</p>
                 <p>🔗 Convois assemblés : <span id="stat-fusions">0</span></p>
+                <p>🌱 Énergie économisée : <span id="stat-eco" style="color: #2ecc71; font-weight: bold;">0.00</span> kWh</p>
             </div>
             <button id="btn-spawn">Générer passagers (+)</button>
         </div>
