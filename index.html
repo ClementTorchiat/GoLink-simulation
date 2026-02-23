@@ -3,21 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulation Bus Modulaires IA</title>
+    <title>Centre de Contrôle - Bus Modulaires IA</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="ui-panel">
-    <h1>Centre de Contrôle IA</h1>
-    <div id="stats-panel">
-        <p>🚐 Flotte : <span id="stat-idle">0</span> libre(s) | <span id="stat-active">0</span> en mission</p>
-        <p>🔗 Convois assemblés : <span id="stat-fusions">0</span></p>
+<div id="app-container">
+    <div id="left-panel">
+        <div id="ui-panel">
+            <h1>Vue Satellite</h1>
+            <div id="stats-panel">
+                <p>🚐 Flotte globale : <span id="stat-idle">0</span> au dépôt | <span id="stat-active">0</span> en route</p>
+                <p>🔗 Convois assemblés : <span id="stat-fusions">0</span></p>
+            </div>
+            <button id="btn-spawn">Générer passagers (+)</button>
+        </div>
+        <div id="canvas-container"></div>
     </div>
-    <button id="btn-spawn">Générer 1 Passager</button>
-</div>
 
-<div id="canvas-container"></div>
+    <div id="right-panel">
+        <h2>📡 Télémétrie des Modules</h2>
+        <div id="bus-grid"></div>
+
+        <h2>📝 Journal du Réseau (Direct)</h2>
+        <div id="action-log"></div>
+    </div>
+</div>
 
 <script src="sketch.js"></script>
 </body>
