@@ -164,7 +164,7 @@ function draw() {
                 let isNetworkClosed = clockMins >= 120 && clockMins < 300;
                 if (!isNetworkClosed) {
                     let spawnRate = 0;
-                    if (clockMins >= 300 && clockMins < 1200) spawnRate = 0.008; // Haute fréquence (petits groupes)
+                    if (clockMins >= 300 && clockMins < 1200) spawnRate = 0.004; // Haute fréquence (petits groupes)
                     else if (clockMins >= 1200 && clockMins <= 1440) spawnRate = 0.003;
                     else spawnRate = 0.0005;
                     if (Math.random() < spawnRate) spawnRandomMission();
@@ -403,7 +403,6 @@ function triggerRushHour(message) {
         let endNode = Math.random() > 0.5 ? random(hotspots).node : grid[floor(random(cols))][floor(random(rows))];
         while (endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
 
-        // Groupes de 5 à 12 personnes
         let groupSize = floor(random(5, 13));
 
         missions.push({
