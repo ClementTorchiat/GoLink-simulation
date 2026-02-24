@@ -13,10 +13,26 @@
         <div id="ui-panel">
             <h1>Centre de Contrôle</h1>
             <div id="clock-display">05:00</div>
-            <div id="mode-controls">
-                <button id="btn-manual" class="active">✋ Mode Manuel</button>
-                <button id="btn-auto">🤖 Mode Auto</button>
+            <div id="mode-controls" style="display: flex; gap: 5px;">
+                <button id="btn-manual" class="active" style="flex: 1;">✋ Manuel</button>
+                <button id="btn-auto" style="flex: 1;">🤖 Auto</button>
+                <button id="btn-heatmap" style="flex: 1; background-color: #34495e; color: white;">👁️ Rayons X</button>
             </div>
+
+            <div id="fleet-controls">
+                <p style="margin: 0 0 5px 0; font-size: 0.85rem; font-weight: bold; color: #2c3e50;">🛠️ Ajouter / Retirer un module</p>
+                <div style="display: flex; gap: 5px;">
+                    <select id="bus-capacity" style="flex: 1; border-radius: 4px; border: 1px solid #bdc3c7; font-family: inherit;">
+                        <option value="4">4 places</option>
+                        <option value="6">6 places</option>
+                        <option value="10">10 places</option>
+                        <option value="12">12 places</option>
+                    </select>
+                    <button id="btn-add-bus" class="btn-blue" style="padding: 5px 10px; width: auto;" title="Créer un module">➕</button>
+                    <button id="btn-remove-bus" class="btn-red" style="padding: 5px 10px; width: auto;" title="Retirer un module au dépôt">➖</button>
+                </div>
+            </div>
+
             <div id="time-controls">
                 <button id="btn-pause" title="Pause">⏸️</button>
                 <button id="btn-x1" class="active" title="Vitesse x1">▶️ x1</button>

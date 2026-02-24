@@ -13,27 +13,36 @@ let isPaused = false;
 let simTime = 0;
 let hoveredBusId = null;
 
-let clockMins = 300;
-let daySpeed = 1440 / (180 * 60);
+let clockMins = 300; // Commence à 05:00
+let daySpeed = 1440 / (180 * 60); // 3 minutes = 24h
 let isAutoMode = false;
 let rushMorningDone = false;
 let rushEveningDone = false;
 let hotspots = [];
 
-// NOUVEAU : Données pour le graphique Big Data
-let chartHistory = [];
-const maxHistoryPoints = 150; // Nombre de points affichés sur la largeur du graphique
+// NOUVEAU : Mode Rayons X
+let isHeatmapMode = false;
 
+let chartHistory = [];
+const maxHistoryPoints = 150;
 const MODULE_CAPACITIES = [4, 6, 10, 12];
 
 function setup() {
     let canvas = createCanvas(cols * spacing, rows * spacing);
     canvas.parent('canvas-container');
 
+    // NOUVEAU : Ajout de la variable "heat" pour la température du sol
     for (let i = 0; i < cols; i++) {
         grid[i] = [];
         for (let j = 0; j < rows; j++) {
-            grid[i][j] = {i: i, j: j, x: i * spacing + spacing / 2, y: j * spacing + spacing / 2, neighbors: []};
+            grid[i][j] = {
+                i: i,
+                j: j,
+                x: i * spacing + spacing / 2,
+                y: j * spacing + spacing / 2,
+                neighbors: [],
+                heat: 0
+            };
         }
     }
     for (let i = 0; i < cols; i++) {
@@ -57,13 +66,21 @@ function setup() {
 
     for (let i = 0; i < 8; i++) buses.push(new Bus(depotNode, random(MODULE_CAPACITIES), i + 1));
 
-    // Initialiser le graphique avec du vide
-    for(let i=0; i<maxHistoryPoints; i++) chartHistory.push({ waiting: 0, inTransit: 0, power: 0, fusionRate: 0 });
+    for (let i = 0; i < maxHistoryPoints; i++) chartHistory.push({waiting: 0, inTransit: 0, power: 0, fusionRate: 0});
 
-    logAction("✅ Système initialisé. Simulation Big Data activée.");
+    logAction("✅ Système initialisé. Simulation de flotte activée.");
 
     document.getElementById('btn-spawn').addEventListener('click', () => {
         spawnRandomMission();
+    });
+
+    // NOUVEAU : Écouteur pour le bouton Rayons X
+    const btnHeatmap = document.getElementById('btn-heatmap');
+    btnHeatmap.addEventListener('click', () => {
+        isHeatmapMode = !isHeatmapMode;
+        if (isHeatmapMode) btnHeatmap.classList.add('active');
+        else btnHeatmap.classList.remove('active');
+        logAction(isHeatmapMode ? "👁️ Vue Thermique (Rayons X) ACTIVÉE." : "👁️ Vue Thermique DÉSACTIVÉE.");
     });
 
     const btnPause = document.getElementById('btn-pause');
@@ -119,78 +136,6 @@ function setup() {
 }
 
 function draw() {
-    let bgDarkness = 0;
-    if (clockMins < 360 || clockMins > 1140) bgDarkness = 160;
-    else if (clockMins > 360 && clockMins < 480) bgDarkness = map(clockMins, 360, 480, 160, 0);
-    else if (clockMins > 1020 && clockMins < 1140) bgDarkness = map(clockMins, 1020, 1140, 0, 160);
-    background(240 - bgDarkness, 240 - bgDarkness, 245 - (bgDarkness * 0.8));
-
-    stroke(200 - (bgDarkness * 0.5));
-    strokeWeight(15);
-    for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows; j++) {
-            let node = grid[i][j];
-            for (let neighbor of node.neighbors) {
-                line(node.x, node.y, neighbor.x, neighbor.y);
-            }
-        }
-    }
-
-    for (let r of closedRoads) {
-        stroke(231, 76, 60);
-        strokeWeight(15);
-        line(r.a.x, r.a.y, r.b.x, r.b.y);
-        stroke(241, 196, 15);
-        strokeWeight(15);
-        drawingContext.setLineDash([15, 15]);
-        line(r.a.x, r.a.y, r.b.x, r.b.y);
-        drawingContext.setLineDash([]);
-    }
-
-    fill(50);
-    noStroke();
-    for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows; j++) {
-            circle(grid[i][j].x, grid[i][j].y, 8);
-        }
-    }
-
-    fill(149, 165, 166);
-    rectMode(CENTER);
-    rect(depotNode.x, depotNode.y, 40, 40, 8);
-    fill(255);
-    textAlign(CENTER, CENTER);
-    textSize(16);
-    text("P", depotNode.x, depotNode.y);
-
-    for (let hs of hotspots) {
-        fill(hs.color);
-        rect(hs.node.x, hs.node.y, 35, 35, 6);
-        fill(255);
-        textSize(14);
-        text(hs.icon, hs.node.x, hs.node.y);
-    }
-
-    for (let m of missions) {
-        fill(231, 76, 60);
-        rectMode(CENTER);
-        rect(m.end.x, m.end.y, 12, 12);
-        if (m.waiting > 0) {
-            fill(241, 196, 15);
-            circle(m.start.x, m.start.y, 20);
-            fill(0);
-            textSize(12);
-            textAlign(CENTER, CENTER);
-            text(m.waiting, m.start.x, m.start.y - 20);
-            stroke(241, 196, 15, 100);
-            strokeWeight(2);
-            drawingContext.setLineDash([5, 5]);
-            line(m.start.x, m.start.y, m.end.x, m.end.y);
-            drawingContext.setLineDash([]);
-            noStroke();
-        }
-    }
-
     if (!isPaused) {
         for (let step = 0; step < timeMultiplier; step++) {
             simTime++;
@@ -219,11 +164,9 @@ function draw() {
                 let isNetworkClosed = clockMins >= 120 && clockMins < 300;
                 if (!isNetworkClosed) {
                     let spawnRate = 0;
-                    // MODIFICATION : On augmente beaucoup la probabilité d'apparition !
-                    if (clockMins >= 300 && clockMins < 1200) spawnRate = 0.008;      // Journée : Pluie de petites requêtes
-                    else if (clockMins >= 1200 && clockMins <= 1440) spawnRate = 0.003; // Soirée : Modéré
-                    else spawnRate = 0.0005;                                            // Nuit profonde : Rare
-
+                    if (clockMins >= 300 && clockMins < 1200) spawnRate = 0.008; // Haute fréquence (petits groupes)
+                    else if (clockMins >= 1200 && clockMins <= 1440) spawnRate = 0.003;
+                    else spawnRate = 0.0005;
                     if (Math.random() < spawnRate) spawnRandomMission();
                 }
             }
@@ -233,65 +176,192 @@ function draw() {
             for (let bus of buses) bus.checkFusion();
             handleInternalTransfers();
 
-            // NOUVEAU : Récolte des statistiques pour le graphique (toutes les ~60 ticks logiques)
+            // NOUVEAU : ALGORITHME THERMIQUE (Refroidissement et Chauffe)
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
+                    grid[i][j].heat *= 0.99; // Le sol refroidit doucement
+                }
+            }
+            for (let m of missions) {
+                m.start.heat += m.waiting * 0.15; // Les passagers chauffent le trottoir !
+            }
+
             if (simTime % 60 === 0) updateChartData();
         }
     }
 
-    if (hoveredBusId !== null) {
+    // --- SÉPARATION DU RENDU VISUEL ---
+    if (isHeatmapMode) {
+        // VUE THERMIQUE RAYONS X
+        background(15, 20, 25); // Nuit d'encre absolue
+
+        // Routes fantomatiques
+        stroke(255, 255, 255, 15);
+        strokeWeight(2);
+        for (let i = 0; i < cols; i++) {
+            for (let j = 0; j < rows; j++) {
+                let node = grid[i][j];
+                for (let neighbor of node.neighbors) {
+                    line(node.x, node.y, neighbor.x, neighbor.y);
+                }
+            }
+        }
+        for (let r of closedRoads) {
+            stroke(231, 76, 60, 50);
+            strokeWeight(4);
+            line(r.a.x, r.a.y, r.b.x, r.b.y);
+        }
+
+        // DESSIN DE LA CHALEUR (Blur Gaussien + Fusion de lumières ADD)
         push();
-        fill(240 - bgDarkness, 240 - bgDarkness, 240 - bgDarkness, 200);
+        drawingContext.filter = 'blur(20px)';
+        blendMode(ADD);
         noStroke();
-        rectMode(CORNER);
-        rect(0, 0, width, height);
+
+        for (let i = 0; i < cols; i++) {
+            for (let j = 0; j < rows; j++) {
+                let heat = grid[i][j].heat;
+                if (heat > 0.5) {
+                    let intensity = min(heat / 100, 1);
+                    let c;
+                    if (intensity < 0.5) c = lerpColor(color(0, 150, 255), color(255, 255, 0), intensity * 2);
+                    else c = lerpColor(color(255, 255, 0), color(255, 0, 0), (intensity - 0.5) * 2);
+
+                    c.setAlpha(intensity * 180 + 30);
+                    fill(c);
+                    circle(grid[i][j].x, grid[i][j].y, spacing * 1.5 + (intensity * spacing));
+                }
+            }
+        }
         pop();
+
+        // Affichage épuré des modules
+        for (let bus of buses) {
+            if (bus.state !== 'IDLE' || bus.isCharging) {
+                fill(255, 255, 255, 150);
+                noStroke();
+                circle(bus.currentX, bus.currentY, 6);
+                if (bus.isFused) {
+                    fill(230, 126, 34, 255);
+                    circle(bus.currentX, bus.currentY, 8);
+                }
+            }
+        }
+
+    } else {
+        // VUE CLASSIQUE (Ta version d'origine)
+        let bgDarkness = 0;
+        if (clockMins < 360 || clockMins > 1140) bgDarkness = 160;
+        else if (clockMins > 360 && clockMins < 480) bgDarkness = map(clockMins, 360, 480, 160, 0);
+        else if (clockMins > 1020 && clockMins < 1140) bgDarkness = map(clockMins, 1020, 1140, 0, 160);
+        background(240 - bgDarkness, 240 - bgDarkness, 245 - (bgDarkness * 0.8));
+
+        stroke(200 - (bgDarkness * 0.5));
+        strokeWeight(15);
+        for (let i = 0; i < cols; i++) {
+            for (let j = 0; j < rows; j++) {
+                let node = grid[i][j];
+                for (let neighbor of node.neighbors) {
+                    line(node.x, node.y, neighbor.x, neighbor.y);
+                }
+            }
+        }
+
+        for (let r of closedRoads) {
+            stroke(231, 76, 60);
+            strokeWeight(15);
+            line(r.a.x, r.a.y, r.b.x, r.b.y);
+            stroke(241, 196, 15);
+            strokeWeight(15);
+            drawingContext.setLineDash([15, 15]);
+            line(r.a.x, r.a.y, r.b.x, r.b.y);
+            drawingContext.setLineDash([]);
+        }
+
+        fill(50);
+        noStroke();
+        for (let i = 0; i < cols; i++) {
+            for (let j = 0; j < rows; j++) {
+                circle(grid[i][j].x, grid[i][j].y, 8);
+            }
+        }
+
+        fill(149, 165, 166);
+        rectMode(CENTER);
+        rect(depotNode.x, depotNode.y, 40, 40, 8);
+        fill(255);
+        textAlign(CENTER, CENTER);
+        textSize(16);
+        text("P", depotNode.x, depotNode.y);
+
+        for (let hs of hotspots) {
+            fill(hs.color);
+            rect(hs.node.x, hs.node.y, 35, 35, 6);
+            fill(255);
+            textSize(14);
+            text(hs.icon, hs.node.x, hs.node.y);
+        }
+
+        for (let m of missions) {
+            fill(231, 76, 60);
+            rectMode(CENTER);
+            rect(m.end.x, m.end.y, 12, 12);
+            if (m.waiting > 0) {
+                fill(241, 196, 15);
+                circle(m.start.x, m.start.y, 20);
+                fill(0);
+                textSize(12);
+                textAlign(CENTER, CENTER);
+                text(m.waiting, m.start.x, m.start.y - 20);
+                stroke(241, 196, 15, 100);
+                strokeWeight(2);
+                drawingContext.setLineDash([5, 5]);
+                line(m.start.x, m.start.y, m.end.x, m.end.y);
+                drawingContext.setLineDash([]);
+                noStroke();
+            }
+        }
+
+        if (hoveredBusId !== null) {
+            push();
+            fill(240 - bgDarkness, 240 - bgDarkness, 240 - bgDarkness, 200);
+            noStroke();
+            rectMode(CORNER);
+            rect(0, 0, width, height);
+            pop();
+        }
+
+        for (let bus of buses) bus.showBody();
+        for (let bus of buses) bus.showLabel();
     }
 
-    for (let bus of buses) bus.showBody();
-    for (let bus of buses) bus.showLabel();
-
     updateUI();
-    drawAnalyticsChart(); // Dessin du graphique à chaque frame visuelle !
+    drawAnalyticsChart();
 }
 
-// --- NOUVELLE FONCTION : BIG DATA / GRAPHIQUE ---
-// --- FONCTIONS : BIG DATA / GRAPHIQUES ---
 function updateChartData() {
     let totalWaiting = missions.reduce((sum, m) => sum + m.waiting, 0);
-    // NOUVEAU : On calcule les gens actuellement dans les bus
     let totalInTransit = missions.reduce((sum, m) => sum + m.inTransit, 0);
-    // NOUVEAU : On calcule la consommation instantanée de tout le réseau
     let totalPower = buses.reduce((sum, b) => sum + b.currentKWh, 0);
 
     let activeBuses = buses.filter(b => b.state !== 'IDLE' && b.state !== 'RETURNING' && !b.isCharging).length;
     let fusedBuses = buses.filter(b => b.isFused).length;
     let fusionRate = activeBuses > 0 ? (fusedBuses / activeBuses) * 100 : 0;
 
-    // On ajoute toutes les courbes dans l'historique
-    chartHistory.push({
-        waiting: totalWaiting,
-        inTransit: totalInTransit,
-        power: totalPower,
-        fusionRate: fusionRate
-    });
-
+    chartHistory.push({waiting: totalWaiting, inTransit: totalInTransit, power: totalPower, fusionRate: fusionRate});
     if (chartHistory.length > maxHistoryPoints) chartHistory.shift();
 }
 
 function drawAnalyticsChart() {
     const canvas = document.getElementById('analytics-chart');
     if (!canvas) return;
-
     if (canvas.width !== canvas.clientWidth) canvas.width = canvas.clientWidth;
-
     const ctx = canvas.getContext('2d');
     const w = canvas.width;
     const h = canvas.height;
-
     ctx.clearRect(0, 0, w, h);
     if (chartHistory.length < 2) return;
 
-    // Grille de fond légère
     ctx.strokeStyle = '#ecf0f1';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -303,12 +373,9 @@ function drawAnalyticsChart() {
     ctx.lineTo(w, h * 0.75);
     ctx.stroke();
 
-    // DÉFINITION DES ÉCHELLES DYNAMIQUES
-    // Le "|| 0" protège contre le vide !
     let maxPeople = Math.max(...chartHistory.map(d => Math.max(d.waiting || 0, d.inTransit || 0)), 20);
     let maxPower = Math.max(...chartHistory.map(d => d.power || 0), 80);
 
-    // Fonction utilitaire pour dessiner une ligne
     function drawLine(key, color, maxValue, isPercentage = false) {
         ctx.beginPath();
         ctx.strokeStyle = color;
@@ -322,23 +389,23 @@ function drawAnalyticsChart() {
         ctx.stroke();
     }
 
-    // DESSIN DES 4 COURBES !
-    drawLine('power', 'rgba(155, 89, 182, 0.4)', maxPower);        // 🟣 Puissance (Violet, un peu transparent en fond)
-    drawLine('inTransit', 'rgba(52, 152, 219, 0.8)', maxPeople);  // 🔵 En Transit (Bleu)
-    drawLine('waiting', 'rgba(231, 76, 60, 0.9)', maxPeople);     // 🔴 Demande en attente (Rouge vif)
-    drawLine('fusionRate', 'rgba(230, 126, 34, 0.9)', 100, true); // 🟠 Taux de Fusion (Orange, échelle 0-100%)
+    drawLine('power', 'rgba(155, 89, 182, 0.4)', maxPower);
+    drawLine('inTransit', 'rgba(52, 152, 219, 0.8)', maxPeople);
+    drawLine('waiting', 'rgba(231, 76, 60, 0.9)', maxPeople);
+    drawLine('fusionRate', 'rgba(230, 126, 34, 0.9)', 100, true);
 }
 
 function triggerRushHour(message) {
     logAction(`🚨 ${message}`);
-    // MODIFICATION : 4 appels au lieu de 6
+    // 4 zones au lieu de 6
     for (let i = 0; i < 4; i++) {
         let startNode = Math.random() > 0.5 ? random(hotspots).node : grid[floor(random(cols))][floor(random(rows))];
         let endNode = Math.random() > 0.5 ? random(hotspots).node : grid[floor(random(cols))][floor(random(rows))];
         while (endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
 
-        // MODIFICATION : Groupes de 5 à 12 personnes max
+        // Groupes de 5 à 12 personnes
         let groupSize = floor(random(5, 13));
+
         missions.push({
             start: startNode,
             end: endNode,
@@ -414,23 +481,29 @@ function removeRoadsWhileConnected(percentage) {
         for (let j = 0; j < rows; j++) {
             let node = grid[i][j];
             for (let neighbor of node.neighbors) {
-                if (node.i < neighbor.i || (node.i === neighbor.i && node.j < neighbor.j)) edges.push({
-                    a: node,
-                    b: neighbor
-                });
+                if (node.i < neighbor.i || (node.i === neighbor.i && node.j < neighbor.j)) {
+                    edges.push({a: node, b: neighbor});
+                }
             }
         }
     }
+
     edges.sort(() => random() - 0.5);
     let edgesToRemove = floor(edges.length * percentage);
     let removedCount = 0;
+
     for (let edge of edges) {
         if (removedCount >= edgesToRemove) break;
+
         let idxA = edge.a.neighbors.indexOf(edge.b);
         edge.a.neighbors.splice(idxA, 1);
+
         let idxB = edge.b.neighbors.indexOf(edge.a);
         edge.b.neighbors.splice(idxB, 1);
-        if (isConnected()) removedCount++; else {
+
+        if (isConnected()) {
+            removedCount++;
+        } else {
             edge.a.neighbors.push(edge.b);
             edge.b.neighbors.push(edge.a);
         }
@@ -530,7 +603,7 @@ function spawnRandomMission() {
     let endNode = grid[floor(random(cols))][floor(random(rows))];
     while (endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
 
-    // MODIFICATION : 1 à 5 personnes max (au lieu de 20)
+    // Groupes de 1 à 5 personnes max
     let groupSize = floor(random(1, 6));
 
     logAction(`📡 Appel : Groupe de ${groupSize} personnes.`);
@@ -571,7 +644,7 @@ function dispatchMissions() {
                 bestBus.reservedSeats += take;
                 m.assigned += take;
                 bestBus.updateTarget();
-                logAction(`🚀 Mod. #${bestBus.id} dispatché.`);
+                logAction(`🚀 Mod. #${bestBus.id} dispatché. (Bat: ${bestBus.battery.toFixed(0)}%).`);
             }
         }
     }
@@ -596,14 +669,17 @@ function optimizeConvoyTransfers(convoy) {
         totalPass += b.currentPassengers;
     }
     if (totalPass === 0) return;
+
     let sortedBuses = [...convoy].sort((a, b) => {
         let scoreA = (a.missionsToPickup.length > 0 ? 1000 : 0) + a.maxCapacity;
         let scoreB = (b.missionsToPickup.length > 0 ? 1000 : 0) + b.maxCapacity;
         return scoreB - scoreA;
     });
+
     let newAssignments = new Map();
     for (let b of sortedBuses) newAssignments.set(b, {missions: [], passengers: 0});
     allDropoffs.sort((a, b) => b.count - a.count);
+
     for (let sm of allDropoffs) {
         for (let b of sortedBuses) {
             let assignment = newAssignments.get(b);
@@ -614,6 +690,7 @@ function optimizeConvoyTransfers(convoy) {
             }
         }
     }
+
     let changed = false;
     for (let b of sortedBuses) {
         if (b.currentPassengers !== newAssignments.get(b).passengers) {
@@ -621,6 +698,7 @@ function optimizeConvoyTransfers(convoy) {
             break;
         }
     }
+
     if (changed) {
         logAction(`🔄 FUSION : Transfert interne optimisé.`);
         for (let b of sortedBuses) {
@@ -729,18 +807,18 @@ class Bus {
                     sm.parent.assigned -= sm.count;
                 }
                 this.missionsToPickup = [];
-                logAction(`🆘 Mod. #${this.id} batterie à plat ! Retour tortue.`);
+                logAction(`🆘 Mod. #${this.id} batterie à plat ! Annulation des ramassages, retour tortue.`);
                 this.updateTarget();
             }
         } else if (this.battery <= 20 && !this.isCharging) {
             this.isCharging = true;
-            logAction(`⚠️ Mod. #${this.id} batterie faible. Dépôt forcé !`);
+            logAction(`⚠️ Mod. #${this.id} batterie faible. Retour au dépôt forcé !`);
             this.updateTarget();
         }
 
         if (isNetworkClosed && this.missionsToDropoff.length === 0 && this.missionsToPickup.length === 0 && this.battery < 100 && !this.isCharging) {
             this.isCharging = true;
-            logAction(`🌙 Mod. #${this.id} a fini son service. Charge nocturne activée.`);
+            logAction(`🌙 Mod. #${this.id} a fini son service. Verrouillage en charge pour la nuit.`);
             this.updateTarget();
         }
 
