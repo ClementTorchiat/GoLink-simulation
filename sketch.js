@@ -13,12 +13,16 @@ let isPaused = false;
 let simTime = 0;
 let hoveredBusId = null;
 
-let clockMins = 300; // Commence à 05:00
-let daySpeed = 1440 / (180 * 60); // 3 minutes = 24h
+let clockMins = 300;
+let daySpeed = 1440 / (180 * 60);
 let isAutoMode = false;
 let rushMorningDone = false;
 let rushEveningDone = false;
 let hotspots = [];
+
+// NOUVEAU : Données pour le graphique Big Data
+let chartHistory = [];
+const maxHistoryPoints = 150; // Nombre de points affichés sur la largeur du graphique
 
 const MODULE_CAPACITIES = [4, 6, 10, 12];
 
@@ -52,7 +56,11 @@ function setup() {
     ];
 
     for (let i = 0; i < 8; i++) buses.push(new Bus(depotNode, random(MODULE_CAPACITIES), i + 1));
-    logAction("✅ Système initialisé. Simulation de flotte activée.");
+
+    // Initialiser le graphique avec du vide
+    for(let i=0; i<maxHistoryPoints; i++) chartHistory.push({ waiting: 0, inTransit: 0, power: 0, fusionRate: 0 });
+
+    logAction("✅ Système initialisé. Simulation Big Data activée.");
 
     document.getElementById('btn-spawn').addEventListener('click', () => {
         spawnRandomMission();
@@ -211,9 +219,11 @@ function draw() {
                 let isNetworkClosed = clockMins >= 120 && clockMins < 300;
                 if (!isNetworkClosed) {
                     let spawnRate = 0;
-                    if (clockMins >= 300 && clockMins < 1200) spawnRate = 0.0035;
-                    else if (clockMins >= 1200 && clockMins <= 1440) spawnRate = 0.0010;
-                    else spawnRate = 0.0002;
+                    // MODIFICATION : On augmente beaucoup la probabilité d'apparition !
+                    if (clockMins >= 300 && clockMins < 1200) spawnRate = 0.008;      // Journée : Pluie de petites requêtes
+                    else if (clockMins >= 1200 && clockMins <= 1440) spawnRate = 0.003; // Soirée : Modéré
+                    else spawnRate = 0.0005;                                            // Nuit profonde : Rare
+
                     if (Math.random() < spawnRate) spawnRandomMission();
                 }
             }
@@ -222,6 +232,9 @@ function draw() {
             for (let bus of buses) bus.updateMovement();
             for (let bus of buses) bus.checkFusion();
             handleInternalTransfers();
+
+            // NOUVEAU : Récolte des statistiques pour le graphique (toutes les ~60 ticks logiques)
+            if (simTime % 60 === 0) updateChartData();
         }
     }
 
@@ -238,15 +251,94 @@ function draw() {
     for (let bus of buses) bus.showLabel();
 
     updateUI();
+    drawAnalyticsChart(); // Dessin du graphique à chaque frame visuelle !
+}
+
+// --- NOUVELLE FONCTION : BIG DATA / GRAPHIQUE ---
+// --- FONCTIONS : BIG DATA / GRAPHIQUES ---
+function updateChartData() {
+    let totalWaiting = missions.reduce((sum, m) => sum + m.waiting, 0);
+    // NOUVEAU : On calcule les gens actuellement dans les bus
+    let totalInTransit = missions.reduce((sum, m) => sum + m.inTransit, 0);
+    // NOUVEAU : On calcule la consommation instantanée de tout le réseau
+    let totalPower = buses.reduce((sum, b) => sum + b.currentKWh, 0);
+
+    let activeBuses = buses.filter(b => b.state !== 'IDLE' && b.state !== 'RETURNING' && !b.isCharging).length;
+    let fusedBuses = buses.filter(b => b.isFused).length;
+    let fusionRate = activeBuses > 0 ? (fusedBuses / activeBuses) * 100 : 0;
+
+    // On ajoute toutes les courbes dans l'historique
+    chartHistory.push({
+        waiting: totalWaiting,
+        inTransit: totalInTransit,
+        power: totalPower,
+        fusionRate: fusionRate
+    });
+
+    if (chartHistory.length > maxHistoryPoints) chartHistory.shift();
+}
+
+function drawAnalyticsChart() {
+    const canvas = document.getElementById('analytics-chart');
+    if (!canvas) return;
+
+    if (canvas.width !== canvas.clientWidth) canvas.width = canvas.clientWidth;
+
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+
+    ctx.clearRect(0, 0, w, h);
+    if (chartHistory.length < 2) return;
+
+    // Grille de fond légère
+    ctx.strokeStyle = '#ecf0f1';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, h / 4);
+    ctx.lineTo(w, h / 4);
+    ctx.moveTo(0, h / 2);
+    ctx.lineTo(w, h / 2);
+    ctx.moveTo(0, h * 0.75);
+    ctx.lineTo(w, h * 0.75);
+    ctx.stroke();
+
+    // DÉFINITION DES ÉCHELLES DYNAMIQUES
+    // Le "|| 0" protège contre le vide !
+    let maxPeople = Math.max(...chartHistory.map(d => Math.max(d.waiting || 0, d.inTransit || 0)), 20);
+    let maxPower = Math.max(...chartHistory.map(d => d.power || 0), 80);
+
+    // Fonction utilitaire pour dessiner une ligne
+    function drawLine(key, color, maxValue, isPercentage = false) {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.5;
+        for (let i = 0; i < chartHistory.length; i++) {
+            let x = (i / (maxHistoryPoints - 1)) * w;
+            let val = isPercentage ? chartHistory[i][key] / 100 : chartHistory[i][key] / maxValue;
+            let y = h - val * (h - 10) - 5;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    // DESSIN DES 4 COURBES !
+    drawLine('power', 'rgba(155, 89, 182, 0.4)', maxPower);        // 🟣 Puissance (Violet, un peu transparent en fond)
+    drawLine('inTransit', 'rgba(52, 152, 219, 0.8)', maxPeople);  // 🔵 En Transit (Bleu)
+    drawLine('waiting', 'rgba(231, 76, 60, 0.9)', maxPeople);     // 🔴 Demande en attente (Rouge vif)
+    drawLine('fusionRate', 'rgba(230, 126, 34, 0.9)', 100, true); // 🟠 Taux de Fusion (Orange, échelle 0-100%)
 }
 
 function triggerRushHour(message) {
     logAction(`🚨 ${message}`);
-    for (let i = 0; i < 6; i++) {
+    // MODIFICATION : 4 appels au lieu de 6
+    for (let i = 0; i < 4; i++) {
         let startNode = Math.random() > 0.5 ? random(hotspots).node : grid[floor(random(cols))][floor(random(rows))];
         let endNode = Math.random() > 0.5 ? random(hotspots).node : grid[floor(random(cols))][floor(random(rows))];
         while (endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
-        let groupSize = floor(random(10, 25));
+
+        // MODIFICATION : Groupes de 5 à 12 personnes max
+        let groupSize = floor(random(5, 13));
         missions.push({
             start: startNode,
             end: endNode,
@@ -316,37 +408,29 @@ function logAction(message) {
     logDiv.scrollTop = logDiv.scrollHeight;
 }
 
-// --- GÉNÉRATION DU GRAPHE ---
 function removeRoadsWhileConnected(percentage) {
     let edges = [];
     for (let i = 0; i < cols; i++) {
         for (let j = 0; j < rows; j++) {
             let node = grid[i][j];
             for (let neighbor of node.neighbors) {
-                if (node.i < neighbor.i || (node.i === neighbor.i && node.j < neighbor.j)) {
-                    edges.push({a: node, b: neighbor});
-                }
+                if (node.i < neighbor.i || (node.i === neighbor.i && node.j < neighbor.j)) edges.push({
+                    a: node,
+                    b: neighbor
+                });
             }
         }
     }
-
     edges.sort(() => random() - 0.5);
     let edgesToRemove = floor(edges.length * percentage);
     let removedCount = 0;
-
     for (let edge of edges) {
         if (removedCount >= edgesToRemove) break;
-
         let idxA = edge.a.neighbors.indexOf(edge.b);
         edge.a.neighbors.splice(idxA, 1);
-
-        // LA CORRECTION EST ICI : on ajoute bien ".neighbors" !
         let idxB = edge.b.neighbors.indexOf(edge.a);
         edge.b.neighbors.splice(idxB, 1);
-
-        if (isConnected()) {
-            removedCount++;
-        } else {
+        if (isConnected()) removedCount++; else {
             edge.a.neighbors.push(edge.b);
             edge.b.neighbors.push(edge.a);
         }
@@ -445,7 +529,10 @@ function spawnRandomMission() {
     let startNode = grid[floor(random(cols))][floor(random(rows))];
     let endNode = grid[floor(random(cols))][floor(random(rows))];
     while (endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
-    let groupSize = floor(random(1, 20));
+
+    // MODIFICATION : 1 à 5 personnes max (au lieu de 20)
+    let groupSize = floor(random(1, 6));
+
     logAction(`📡 Appel : Groupe de ${groupSize} personnes.`);
     missions.push({start: startNode, end: endNode, total: groupSize, waiting: groupSize, assigned: 0, inTransit: 0});
 }
@@ -484,7 +571,7 @@ function dispatchMissions() {
                 bestBus.reservedSeats += take;
                 m.assigned += take;
                 bestBus.updateTarget();
-                logAction(`🚀 Mod. #${bestBus.id} dispatché. (Bat: ${bestBus.battery.toFixed(0)}%).`);
+                logAction(`🚀 Mod. #${bestBus.id} dispatché.`);
             }
         }
     }
@@ -502,24 +589,24 @@ function handleInternalTransfers() {
 }
 
 function optimizeConvoyTransfers(convoy) {
-    let allDropoffs = []; let totalPass = 0;
-    for (let b of convoy) { allDropoffs.push(...b.missionsToDropoff); totalPass += b.currentPassengers; }
+    let allDropoffs = [];
+    let totalPass = 0;
+    for (let b of convoy) {
+        allDropoffs.push(...b.missionsToDropoff);
+        totalPass += b.currentPassengers;
+    }
     if (totalPass === 0) return;
-
     let sortedBuses = [...convoy].sort((a, b) => {
         let scoreA = (a.missionsToPickup.length > 0 ? 1000 : 0) + a.maxCapacity;
         let scoreB = (b.missionsToPickup.length > 0 ? 1000 : 0) + b.maxCapacity;
         return scoreB - scoreA;
     });
-
     let newAssignments = new Map();
-    for (let b of sortedBuses) newAssignments.set(b, { missions: [], passengers: 0 });
+    for (let b of sortedBuses) newAssignments.set(b, {missions: [], passengers: 0});
     allDropoffs.sort((a, b) => b.count - a.count);
-
     for (let sm of allDropoffs) {
         for (let b of sortedBuses) {
             let assignment = newAssignments.get(b);
-            // CORRECTION ANTI-FRAUDE : On prend en compte les sièges déjà réservés !
             if (assignment.passengers + sm.count <= (b.maxCapacity - b.reservedSeats)) {
                 assignment.missions.push(sm);
                 assignment.passengers += sm.count;
@@ -527,20 +614,26 @@ function optimizeConvoyTransfers(convoy) {
             }
         }
     }
-
     let changed = false;
-    for (let b of sortedBuses) { if (b.currentPassengers !== newAssignments.get(b).passengers) { changed = true; break; } }
-
+    for (let b of sortedBuses) {
+        if (b.currentPassengers !== newAssignments.get(b).passengers) {
+            changed = true;
+            break;
+        }
+    }
     if (changed) {
         logAction(`🔄 FUSION : Transfert interne optimisé.`);
         for (let b of sortedBuses) {
-            let assignment = newAssignments.get(b); let diff = assignment.passengers - b.currentPassengers;
-            b.missionsToDropoff = assignment.missions; b.currentPassengers = assignment.passengers;
+            let assignment = newAssignments.get(b);
+            let diff = assignment.passengers - b.currentPassengers;
+            b.missionsToDropoff = assignment.missions;
+            b.currentPassengers = assignment.passengers;
             b.updateTarget();
             if (diff < 0) logAction(`📉 Mod. #${b.id} a transféré ses passagers et se vide.`);
         }
     }
 }
+
 class Bus {
     constructor(startNode, maxCapacity, id) {
         this.id = id;
@@ -636,19 +729,18 @@ class Bus {
                     sm.parent.assigned -= sm.count;
                 }
                 this.missionsToPickup = [];
-                logAction(`🆘 Mod. #${this.id} batterie à plat ! Annulation des ramassages, retour tortue.`);
+                logAction(`🆘 Mod. #${this.id} batterie à plat ! Retour tortue.`);
                 this.updateTarget();
             }
         } else if (this.battery <= 20 && !this.isCharging) {
             this.isCharging = true;
-            logAction(`⚠️ Mod. #${this.id} batterie faible. Retour au dépôt forcé !`);
+            logAction(`⚠️ Mod. #${this.id} batterie faible. Dépôt forcé !`);
             this.updateTarget();
         }
 
-        // NOUVEAU : VERROUILLAGE NOCTURNE
         if (isNetworkClosed && this.missionsToDropoff.length === 0 && this.missionsToPickup.length === 0 && this.battery < 100 && !this.isCharging) {
             this.isCharging = true;
-            logAction(`🌙 Mod. #${this.id} a fini son service. Verrouillage en charge pour la nuit.`);
+            logAction(`🌙 Mod. #${this.id} a fini son service. Charge nocturne activée.`);
             this.updateTarget();
         }
 

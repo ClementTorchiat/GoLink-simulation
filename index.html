@@ -12,20 +12,17 @@
     <div id="left-panel">
         <div id="ui-panel">
             <h1>Centre de Contrôle</h1>
-
             <div id="clock-display">05:00</div>
             <div id="mode-controls">
                 <button id="btn-manual" class="active">✋ Mode Manuel</button>
-                <button id="btn-auto">🤖 Mode Automatique</button>
+                <button id="btn-auto">🤖 Mode Auto</button>
             </div>
-
             <div id="time-controls">
                 <button id="btn-pause" title="Pause">⏸️</button>
                 <button id="btn-x1" class="active" title="Vitesse x1">▶️ x1</button>
                 <button id="btn-x2" title="Vitesse x2">⏩ x2</button>
                 <button id="btn-x5" title="Vitesse x5">⏭️ x5</button>
             </div>
-
             <div id="stats-panel">
                 <p>🚐 Flotte globale : <span id="stat-idle">0</span> au repos | <span id="stat-active">0</span> en route</p>
                 <p>🔗 Convois assemblés : <span id="stat-fusions">0</span></p>
@@ -37,6 +34,15 @@
     </div>
 
     <div id="right-panel">
+        <h2>📊 Analytique du Réseau (Direct)</h2>
+        <canvas id="analytics-chart" height="150"></canvas>
+        <div style="font-size: 0.75rem; margin-bottom: 15px; text-align: center;">
+            <span style="color: #e74c3c; font-weight: bold;">■ Attente</span> |
+            <span style="color: #3498db; font-weight: bold;">■ En transit</span> |
+            <span style="color: #9b59b6; font-weight: bold;">■ Puissance (kW)</span> |
+            <span style="color: #e67e22; font-weight: bold;">■ Fusion (%)</span>
+        </div>
+
         <h2>📡 Télémétrie des Modules</h2>
         <div id="bus-grid"></div>
 
