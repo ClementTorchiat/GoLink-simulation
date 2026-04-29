@@ -13,16 +13,14 @@ let isPaused = false;
 let simTime = 0;
 let hoveredBusId = null;
 
-let clockMins = 300; // Commence à 05:00
-let daySpeed = 1440 / (180 * 60); // 3 minutes = 24h
+let clockMins = 300;
+let daySpeed = 1440 / (180 * 60);
 let isAutoMode = false;
 let rushMorningDone = false;
 let rushEveningDone = false;
 let hotspots = [];
-
-// NOUVEAU : Mode Rayons X
+let nextBusId = 1;
 let isHeatmapMode = false;
-
 let chartHistory = [];
 const maxHistoryPoints = 150;
 const MODULE_CAPACITIES = [4, 6, 10, 12];
@@ -31,7 +29,6 @@ function setup() {
     let canvas = createCanvas(cols * spacing, rows * spacing);
     canvas.parent('canvas-container');
 
-    // NOUVEAU : Ajout de la variable "heat" pour la température du sol
     for (let i = 0; i < cols; i++) {
         grid[i] = [];
         for (let j = 0; j < rows; j++) {
@@ -64,22 +61,17 @@ function setup() {
         {node: grid[cols - 2][rows - 2], name: "Centre Commercial", color: '#e74c3c', icon: '🛍️'}
     ];
 
-    for (let i = 0; i < 8; i++) buses.push(new Bus(depotNode, random(MODULE_CAPACITIES), i + 1));
-
     for (let i = 0; i < maxHistoryPoints; i++) chartHistory.push({waiting: 0, inTransit: 0, power: 0, fusionRate: 0});
-
-    logAction("✅ Système initialisé. Simulation de flotte activée.");
+    logAction("✅ Système initialisé. Flotte élastique (0 module).");
 
     document.getElementById('btn-spawn').addEventListener('click', () => {
         spawnRandomMission();
     });
 
-    // NOUVEAU : Écouteur pour le bouton Rayons X
     const btnHeatmap = document.getElementById('btn-heatmap');
     btnHeatmap.addEventListener('click', () => {
         isHeatmapMode = !isHeatmapMode;
-        if (isHeatmapMode) btnHeatmap.classList.add('active');
-        else btnHeatmap.classList.remove('active');
+        if (isHeatmapMode) btnHeatmap.classList.add('active'); else btnHeatmap.classList.remove('active');
         logAction(isHeatmapMode ? "👁️ Vue Thermique (Rayons X) ACTIVÉE." : "👁️ Vue Thermique DÉSACTIVÉE.");
     });
 
@@ -117,13 +109,41 @@ function setup() {
         logAction("⏭️ Vitesse x5.");
     });
 
+    const btnAddBus = document.getElementById('btn-add-bus');
+    const btnRemoveBus = document.getElementById('btn-remove-bus');
+    const btnAddTow = document.getElementById('btn-add-tow');
+    btnAddBus.addEventListener('click', () => {
+        let cap = parseInt(document.getElementById('bus-capacity').value);
+        buses.push(new Bus(depotNode, cap, nextBusId++));
+        logAction(`➕ Module #${nextBusId - 1} ajouté manuellement.`);
+    });
+    btnRemoveBus.addEventListener('click', () => {
+        let idx = buses.findIndex(b => b.currentNode === depotNode && b.state === 'IDLE' && b.missionsToPickup.length === 0);
+        if (idx !== -1) {
+            let removedId = buses[idx].id;
+            buses.splice(idx, 1);
+            logAction(`➖ Module #${removedId} retiré manuellement.`);
+        } else {
+            logAction(`⚠️ Impossible : Aucun module garé au dépôt.`);
+        }
+    });
+
+    // NOUVEAU : BOUTON REMORQUEUSE
+    btnAddTow.addEventListener('click', () => {
+        let tow = new Bus(depotNode, 0, nextBusId++, 'TOW');
+        buses.push(tow);
+        logAction(`🚑 DÉPLOIEMENT MANUEL : Remorqueuse #${tow.id} activée.`);
+    });
+
     const btnManual = document.getElementById('btn-manual');
     const btnAuto = document.getElementById('btn-auto');
+    const fleetControls = document.getElementById('fleet-controls');
     btnManual.addEventListener('click', () => {
         isAutoMode = false;
         btnManual.classList.add('active');
         btnAuto.classList.remove('active');
         document.getElementById('btn-spawn').style.display = 'block';
+        fleetControls.style.display = 'block';
         logAction("✋ Mode Manuel activé.");
     });
     btnAuto.addEventListener('click', () => {
@@ -131,7 +151,8 @@ function setup() {
         btnAuto.classList.add('active');
         btnManual.classList.remove('active');
         document.getElementById('btn-spawn').style.display = 'none';
-        logAction("🤖 Mode Automatique activé.");
+        fleetControls.style.display = 'none';
+        logAction("🤖 Mode Automatique. L'IA contrôle 100% du réseau.");
     });
 }
 
@@ -146,7 +167,6 @@ function draw() {
                     rushMorningDone = false;
                     rushEveningDone = false;
                 }
-
                 if (clockMins >= 480 && clockMins < 490 && !rushMorningDone) {
                     rushMorningDone = true;
                     triggerRushHour("🌅 HEURE DE POINTE (Matin) !");
@@ -155,18 +175,15 @@ function draw() {
                     rushEveningDone = true;
                     triggerRushHour("🌇 HEURE DE POINTE (Soir) !");
                 }
-
                 if (clockMins >= 120 && clockMins < 120 + daySpeed && missions.length > 0) {
                     missions = [];
-                    logAction("🛑 02:00 - Fin de service. Toutes les demandes en attente sont annulées.");
+                    logAction("🛑 02:00 - Fin de service. Toutes les demandes sont annulées.");
                 }
 
                 let isNetworkClosed = clockMins >= 120 && clockMins < 300;
                 if (!isNetworkClosed) {
                     let spawnRate = 0;
-                    if (clockMins >= 300 && clockMins < 1200) spawnRate = 0.004; // Haute fréquence (petits groupes)
-                    else if (clockMins >= 1200 && clockMins <= 1440) spawnRate = 0.003;
-                    else spawnRate = 0.0005;
+                    if (clockMins >= 300 && clockMins < 1200) spawnRate = 0.008; else if (clockMins >= 1200 && clockMins <= 1440) spawnRate = 0.003; else spawnRate = 0.0005;
                     if (Math.random() < spawnRate) spawnRandomMission();
                 }
             }
@@ -176,26 +193,45 @@ function draw() {
             for (let bus of buses) bus.checkFusion();
             handleInternalTransfers();
 
-            // NOUVEAU : ALGORITHME THERMIQUE (Refroidissement et Chauffe)
             for (let i = 0; i < cols; i++) {
                 for (let j = 0; j < rows; j++) {
-                    grid[i][j].heat *= 0.99; // Le sol refroidit doucement
+                    grid[i][j].heat *= 0.99;
                 }
             }
             for (let m of missions) {
-                m.start.heat += m.waiting * 0.15; // Les passagers chauffent le trottoir !
+                m.start.heat += m.waiting * 0.15;
             }
 
-            if (simTime % 60 === 0) updateChartData();
+            // AUTO-SPAWN DES REMORQUEUSES SI URGENCE
+            if (isAutoMode && simTime % 30 === 0) {
+                let strandedBuses = buses.filter(b => b.state === 'STRANDED' && !buses.some(tow => tow.strandedTarget === b));
+                for (let sb of strandedBuses) {
+                    let availableTow = buses.find(b => b.type === 'TOW' && b.state === 'IDLE');
+                    if (!availableTow) {
+                        availableTow = new Bus(depotNode, 0, nextBusId++, 'TOW');
+                        buses.push(availableTow);
+                        logAction(`🏭 URGENCE AUTO : Le dépôt fabrique la Remorqueuse #${availableTow.id}.`);
+                    }
+                }
+            }
+
+            if (simTime % 60 === 0) {
+                updateChartData();
+                if (isAutoMode) {
+                    for (let i = buses.length - 1; i >= 0; i--) {
+                        let b = buses[i];
+                        if (b.currentNode === depotNode && b.state === 'IDLE' && b.missionsToPickup.length === 0 && b.missionsToDropoff.length === 0 && b.battery >= 99) {
+                            logAction(`♻️ Rangement : Module #${b.id} mis en veille au garage.`);
+                            buses.splice(i, 1);
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // --- SÉPARATION DU RENDU VISUEL ---
     if (isHeatmapMode) {
-        // VUE THERMIQUE RAYONS X
-        background(15, 20, 25); // Nuit d'encre absolue
-
-        // Routes fantomatiques
+        background(15, 20, 25);
         stroke(255, 255, 255, 15);
         strokeWeight(2);
         for (let i = 0; i < cols; i++) {
@@ -211,22 +247,17 @@ function draw() {
             strokeWeight(4);
             line(r.a.x, r.a.y, r.b.x, r.b.y);
         }
-
-        // DESSIN DE LA CHALEUR (Blur Gaussien + Fusion de lumières ADD)
         push();
         drawingContext.filter = 'blur(20px)';
         blendMode(ADD);
         noStroke();
-
         for (let i = 0; i < cols; i++) {
             for (let j = 0; j < rows; j++) {
                 let heat = grid[i][j].heat;
                 if (heat > 0.5) {
                     let intensity = min(heat / 100, 1);
                     let c;
-                    if (intensity < 0.5) c = lerpColor(color(0, 150, 255), color(255, 255, 0), intensity * 2);
-                    else c = lerpColor(color(255, 255, 0), color(255, 0, 0), (intensity - 0.5) * 2);
-
+                    if (intensity < 0.5) c = lerpColor(color(0, 150, 255), color(255, 255, 0), intensity * 2); else c = lerpColor(color(255, 255, 0), color(255, 0, 0), (intensity - 0.5) * 2);
                     c.setAlpha(intensity * 180 + 30);
                     fill(c);
                     circle(grid[i][j].x, grid[i][j].y, spacing * 1.5 + (intensity * spacing));
@@ -234,8 +265,6 @@ function draw() {
             }
         }
         pop();
-
-        // Affichage épuré des modules
         for (let bus of buses) {
             if (bus.state !== 'IDLE' || bus.isCharging) {
                 fill(255, 255, 255, 150);
@@ -247,15 +276,10 @@ function draw() {
                 }
             }
         }
-
     } else {
-        // VUE CLASSIQUE (Ta version d'origine)
         let bgDarkness = 0;
-        if (clockMins < 360 || clockMins > 1140) bgDarkness = 160;
-        else if (clockMins > 360 && clockMins < 480) bgDarkness = map(clockMins, 360, 480, 160, 0);
-        else if (clockMins > 1020 && clockMins < 1140) bgDarkness = map(clockMins, 1020, 1140, 0, 160);
+        if (clockMins < 360 || clockMins > 1140) bgDarkness = 160; else if (clockMins > 360 && clockMins < 480) bgDarkness = map(clockMins, 360, 480, 160, 0); else if (clockMins > 1020 && clockMins < 1140) bgDarkness = map(clockMins, 1020, 1140, 0, 160);
         background(240 - bgDarkness, 240 - bgDarkness, 245 - (bgDarkness * 0.8));
-
         stroke(200 - (bgDarkness * 0.5));
         strokeWeight(15);
         for (let i = 0; i < cols; i++) {
@@ -266,7 +290,6 @@ function draw() {
                 }
             }
         }
-
         for (let r of closedRoads) {
             stroke(231, 76, 60);
             strokeWeight(15);
@@ -277,7 +300,6 @@ function draw() {
             line(r.a.x, r.a.y, r.b.x, r.b.y);
             drawingContext.setLineDash([]);
         }
-
         fill(50);
         noStroke();
         for (let i = 0; i < cols; i++) {
@@ -285,7 +307,6 @@ function draw() {
                 circle(grid[i][j].x, grid[i][j].y, 8);
             }
         }
-
         fill(149, 165, 166);
         rectMode(CENTER);
         rect(depotNode.x, depotNode.y, 40, 40, 8);
@@ -293,7 +314,6 @@ function draw() {
         textAlign(CENTER, CENTER);
         textSize(16);
         text("P", depotNode.x, depotNode.y);
-
         for (let hs of hotspots) {
             fill(hs.color);
             rect(hs.node.x, hs.node.y, 35, 35, 6);
@@ -301,7 +321,6 @@ function draw() {
             textSize(14);
             text(hs.icon, hs.node.x, hs.node.y);
         }
-
         for (let m of missions) {
             fill(231, 76, 60);
             rectMode(CENTER);
@@ -321,7 +340,6 @@ function draw() {
                 noStroke();
             }
         }
-
         if (hoveredBusId !== null) {
             push();
             fill(240 - bgDarkness, 240 - bgDarkness, 240 - bgDarkness, 200);
@@ -330,11 +348,9 @@ function draw() {
             rect(0, 0, width, height);
             pop();
         }
-
         for (let bus of buses) bus.showBody();
         for (let bus of buses) bus.showLabel();
     }
-
     updateUI();
     drawAnalyticsChart();
 }
@@ -343,11 +359,9 @@ function updateChartData() {
     let totalWaiting = missions.reduce((sum, m) => sum + m.waiting, 0);
     let totalInTransit = missions.reduce((sum, m) => sum + m.inTransit, 0);
     let totalPower = buses.reduce((sum, b) => sum + b.currentKWh, 0);
-
-    let activeBuses = buses.filter(b => b.state !== 'IDLE' && b.state !== 'RETURNING' && !b.isCharging).length;
-    let fusedBuses = buses.filter(b => b.isFused).length;
+    let activeBuses = buses.filter(b => b.state !== 'IDLE' && b.state !== 'RETURNING' && !b.isCharging && b.type === 'PASSENGER').length;
+    let fusedBuses = buses.filter(b => b.isFused && b.type === 'PASSENGER').length;
     let fusionRate = activeBuses > 0 ? (fusedBuses / activeBuses) * 100 : 0;
-
     chartHistory.push({waiting: totalWaiting, inTransit: totalInTransit, power: totalPower, fusionRate: fusionRate});
     if (chartHistory.length > maxHistoryPoints) chartHistory.shift();
 }
@@ -361,7 +375,6 @@ function drawAnalyticsChart() {
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
     if (chartHistory.length < 2) return;
-
     ctx.strokeStyle = '#ecf0f1';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -372,7 +385,6 @@ function drawAnalyticsChart() {
     ctx.moveTo(0, h * 0.75);
     ctx.lineTo(w, h * 0.75);
     ctx.stroke();
-
     let maxPeople = Math.max(...chartHistory.map(d => Math.max(d.waiting || 0, d.inTransit || 0)), 20);
     let maxPower = Math.max(...chartHistory.map(d => d.power || 0), 80);
 
@@ -397,14 +409,11 @@ function drawAnalyticsChart() {
 
 function triggerRushHour(message) {
     logAction(`🚨 ${message}`);
-    // 4 zones au lieu de 6
     for (let i = 0; i < 4; i++) {
         let startNode = Math.random() > 0.5 ? random(hotspots).node : grid[floor(random(cols))][floor(random(rows))];
         let endNode = Math.random() > 0.5 ? random(hotspots).node : grid[floor(random(cols))][floor(random(rows))];
         while (endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
-
         let groupSize = floor(random(5, 13));
-
         missions.push({
             start: startNode,
             end: endNode,
@@ -486,20 +495,15 @@ function removeRoadsWhileConnected(percentage) {
             }
         }
     }
-
     edges.sort(() => random() - 0.5);
     let edgesToRemove = floor(edges.length * percentage);
     let removedCount = 0;
-
     for (let edge of edges) {
         if (removedCount >= edgesToRemove) break;
-
         let idxA = edge.a.neighbors.indexOf(edge.b);
         edge.a.neighbors.splice(idxA, 1);
-
         let idxB = edge.b.neighbors.indexOf(edge.a);
         edge.b.neighbors.splice(idxB, 1);
-
         if (isConnected()) {
             removedCount++;
         } else {
@@ -530,14 +534,20 @@ function updateUI() {
     let hrs = Math.floor(clockMins / 60);
     let mins = Math.floor(clockMins % 60);
     document.getElementById('clock-display').innerText = `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-
     let idleCount = 0;
     let activeCount = 0;
     let fusedModulesCount = 0;
     let gridContainer = document.getElementById('bus-grid');
-    if (gridContainer.children.length === 0) {
-        for (let bus of buses) {
-            let card = document.createElement('div');
+    Array.from(gridContainer.children).forEach(card => {
+        let busId = parseInt(card.id.replace('bus-card-', ''));
+        if (!buses.find(b => b.id === busId)) {
+            gridContainer.removeChild(card);
+        }
+    });
+    for (let bus of buses) {
+        let card = document.getElementById(`bus-card-${bus.id}`);
+        if (!card) {
+            card = document.createElement('div');
             card.className = 'bus-card';
             card.id = `bus-card-${bus.id}`;
             card.addEventListener('mouseenter', () => {
@@ -555,98 +565,67 @@ function updateUI() {
         if (bus.isFused) fusedModulesCount++;
 
         let stateColor = '#95a5a6';
-        let stateText = "Repos / En Attente";
+        let stateText = "Dépôt";
         let batColor = bus.battery > 50 ? '#2ecc71' : (bus.battery > 20 ? '#f39c12' : '#e74c3c');
         let batWarning = '';
 
-        if (bus.battery <= 0) {
-            batWarning = '💥 BATTERIE VIDE';
-        } else if (bus.battery <= 20) {
-            batWarning = '🔌 Besoin charge';
+        if (bus.type === 'TOW') {
+            batColor = '#f1c40f'; // Infinite
+            if (bus.state === 'GOING_TO_RESCUE') {
+                stateColor = '#f39c12';
+                stateText = '🚑 En route';
+            } else if (bus.state === 'TOWING_BACK') {
+                stateColor = '#d35400';
+                stateText = '🔗 Remorquage';
+            } else if (bus.state === 'RETURNING') {
+                stateColor = '#7f8c8d';
+                stateText = '⚪ Retour Dépôt';
+            }
+        } else {
+            if (bus.battery <= 0) batWarning = '💥 IMMOBILISÉ'; else if (bus.battery <= 20) batWarning = '🔌 Besoin charge';
+            if (bus.state === 'DYING') {
+                stateColor = '#e67e22';
+                stateText = '⚠️ Agonie...';
+            } else if (bus.state === 'STRANDED') {
+                stateColor = '#e74c3c';
+                stateText = '❌ PANNE SÈCHE';
+            } else if (bus.state === 'TOWED') {
+                stateColor = '#d35400';
+                stateText = '🔗 Tracté';
+                batWarning = '🚑 Remorqué';
+            } else if (bus.isCharging) {
+                stateColor = '#8e44ad';
+                stateText = "⚡ EN CHARGE";
+                batWarning = "⏳ Recharge...";
+                batColor = '#8e44ad';
+            } else if (bus.isFused) {
+                stateColor = '#e67e22';
+                if (bus.state === 'CARRYING') stateText = "🔗 Fusion (Transit)"; else stateText = "🔗 Fusion (Approche)";
+            } else if (bus.state === 'GOING_TO_PICKUP') {
+                stateColor = '#3498db';
+                stateText = "🔵 En approche";
+            } else if (bus.state === 'CARRYING') {
+                stateColor = '#2ecc71';
+                stateText = "🟢 En transit";
+            } else if (bus.state === 'RETURNING') {
+                stateColor = '#7f8c8d';
+                stateText = "⚪ Retour Dépôt";
+            }
         }
 
-        if (bus.isCharging) {
-            stateColor = '#8e44ad';
-            stateText = "⚡ EN CHARGE";
-            batWarning = "⏳ Recharge...";
-            batColor = '#8e44ad';
-        } else if (bus.isFused) {
-            stateColor = '#e67e22';
-            if (bus.state === 'CARRYING') stateText = "🔗 Fusion (Transit)"; else if (bus.state === 'GOING_TO_PICKUP') stateText = "🔗 Fusion (Approche)"; else stateText = "🔗 Fusion (Patrouille)";
-        } else if (bus.state === 'GOING_TO_PICKUP') {
-            stateColor = '#3498db';
-            stateText = "🔵 En approche";
-        } else if (bus.state === 'CARRYING') {
-            stateColor = '#2ecc71';
-            stateText = "🟢 En transit";
-        } else if (bus.state === 'RETURNING') {
-            stateColor = '#7f8c8d';
-            stateText = "⚪ Retour Dépôt";
-        } else if (bus.state === 'PREPOSITIONING') {
-            stateColor = '#f1c40f';
-            stateText = "📍 Patrouille (Hotspot)";
-        }
+        let capText = bus.type === 'TOW' ? 'REMORQUE' : `${bus.maxCapacity} pl.`;
+        let passText = bus.type === 'TOW' ? 'INTERVENTION' : `${bus.currentPassengers} / ${bus.maxCapacity} ${bus.reservedSeats > 0 ? '(+' + bus.reservedSeats + ' résa)' : ''}`;
 
         let card = document.getElementById(`bus-card-${bus.id}`);
-        card.style.borderLeftColor = stateColor;
-        card.innerHTML = `<h3>Mod. #${bus.id} <span style="font-size: 0.75rem; float: right; color: #7f8c8d;">${bus.maxCapacity} pl.</span></h3><p><b>Passagers :</b> ${bus.currentPassengers} / ${bus.maxCapacity} ${bus.reservedSeats > 0 ? '(+' + bus.reservedSeats + ' résa)' : ''}</p><p><b>État :</b> ${stateText}</p><p><b>🔋 Batterie :</b> <span style="color: ${batColor}; font-weight: bold;">${bus.battery.toFixed(1)}%</span> <span style="font-size: 0.7rem; color: #e74c3c;">${batWarning}</span></p><p><b>⚡ Moteur :</b> ${bus.currentKWh.toFixed(1)} kW ${bus.isFused ? '<span style="color:#e67e22; font-size: 0.75rem;">(ÉCO)</span>' : ''}</p>`;
+        if (card) {
+            card.style.borderLeftColor = stateColor;
+            card.innerHTML = `<h3>${bus.type === 'TOW' ? '🚑' : 'Mod.'} #${bus.id} <span style="font-size: 0.75rem; float: right; color: #7f8c8d;">${capText}</span></h3><p><b>Passagers :</b> ${passText}</p><p><b>État :</b> ${stateText}</p><p><b>🔋 Batterie :</b> <span style="color: ${batColor}; font-weight: bold;">${bus.battery.toFixed(1)}%</span> <span style="font-size: 0.7rem; color: #e74c3c;">${batWarning}</span></p><p><b>⚡ Moteur :</b> ${bus.currentKWh.toFixed(1)} kW ${bus.isFused ? '<span style="color:#e67e22; font-size: 0.75rem;">(ÉCO)</span>' : ''}</p>`;
+        }
     }
     document.getElementById('stat-idle').innerText = idleCount;
     document.getElementById('stat-active').innerText = activeCount;
     document.getElementById('stat-fusions').innerText = Math.floor(fusedModulesCount / 2);
     document.getElementById('stat-eco').innerText = totalEnergySaved.toFixed(2);
-}
-
-function spawnRandomMission() {
-    let startNode = grid[floor(random(cols))][floor(random(rows))];
-    let endNode = grid[floor(random(cols))][floor(random(rows))];
-    while (endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
-
-    // Groupes de 1 à 5 personnes max
-    let groupSize = floor(random(1, 6));
-
-    logAction(`📡 Appel : Groupe de ${groupSize} personnes.`);
-    missions.push({start: startNode, end: endNode, total: groupSize, waiting: groupSize, assigned: 0, inTransit: 0});
-}
-
-function dispatchMissions() {
-    for (let m of missions) {
-        let needed = m.waiting - m.assigned;
-        if (needed > 0) {
-            let bestBus = null;
-            let bestScore = Infinity;
-            for (let bus of buses) {
-                let available = bus.maxCapacity - bus.currentPassengers - bus.reservedSeats;
-                let isNetworkClosed = isAutoMode && (clockMins >= 120 && clockMins < 300);
-                if (available > 0 && !bus.isCharging && bus.battery > 0 && !isNetworkClosed) {
-                    let take = min(needed, available);
-                    let d = heuristic(bus.currentNode, m.start);
-                    let score = d;
-                    if (bus.missionsToPickup.length > 0 || bus.missionsToDropoff.length > 0) {
-                        score += 15;
-                        if (bus.targetNode) {
-                            let detour = (heuristic(bus.currentNode, m.start) + heuristic(m.start, bus.targetNode)) - heuristic(bus.currentNode, bus.targetNode);
-                            score += detour * 3;
-                        }
-                    }
-                    if (take < needed) score += 50 + ((needed - take) * 5); else if (take < available) score += (available - take) * 2;
-                    if (score < bestScore) {
-                        bestScore = score;
-                        bestBus = bus;
-                    }
-                }
-            }
-            if (bestBus) {
-                let available = bestBus.maxCapacity - bestBus.currentPassengers - bestBus.reservedSeats;
-                let take = min(needed, available);
-                bestBus.missionsToPickup.push({parent: m, start: m.start, end: m.end, count: take});
-                bestBus.reservedSeats += take;
-                m.assigned += take;
-                bestBus.updateTarget();
-                logAction(`🚀 Mod. #${bestBus.id} dispatché. (Bat: ${bestBus.battery.toFixed(0)}%).`);
-            }
-        }
-    }
 }
 
 function handleInternalTransfers() {
@@ -661,12 +640,8 @@ function handleInternalTransfers() {
 }
 
 function optimizeConvoyTransfers(convoy) {
-    let allDropoffs = [];
-    let totalPass = 0;
-    for (let b of convoy) {
-        allDropoffs.push(...b.missionsToDropoff);
-        totalPass += b.currentPassengers;
-    }
+    let allDropoffs = []; let totalPass = 0;
+    for (let b of convoy) { allDropoffs.push(...b.missionsToDropoff); totalPass += b.currentPassengers; }
     if (totalPass === 0) return;
 
     let sortedBuses = [...convoy].sort((a, b) => {
@@ -683,28 +658,19 @@ function optimizeConvoyTransfers(convoy) {
         for (let b of sortedBuses) {
             let assignment = newAssignments.get(b);
             if (assignment.passengers + sm.count <= (b.maxCapacity - b.reservedSeats)) {
-                assignment.missions.push(sm);
-                assignment.passengers += sm.count;
-                break;
+                assignment.missions.push(sm); assignment.passengers += sm.count; break;
             }
         }
     }
 
     let changed = false;
-    for (let b of sortedBuses) {
-        if (b.currentPassengers !== newAssignments.get(b).passengers) {
-            changed = true;
-            break;
-        }
-    }
+    for (let b of sortedBuses) { if (b.currentPassengers !== newAssignments.get(b).passengers) { changed = true; break; } }
 
     if (changed) {
         logAction(`🔄 FUSION : Transfert interne optimisé.`);
         for (let b of sortedBuses) {
-            let assignment = newAssignments.get(b);
-            let diff = assignment.passengers - b.currentPassengers;
-            b.missionsToDropoff = assignment.missions;
-            b.currentPassengers = assignment.passengers;
+            let assignment = newAssignments.get(b); let diff = assignment.passengers - b.currentPassengers;
+            b.missionsToDropoff = assignment.missions; b.currentPassengers = assignment.passengers;
             b.updateTarget();
             if (diff < 0) logAction(`📉 Mod. #${b.id} a transféré ses passagers et se vide.`);
         }
@@ -712,8 +678,10 @@ function optimizeConvoyTransfers(convoy) {
 }
 
 class Bus {
-    constructor(startNode, maxCapacity, id) {
+    // NOUVEAU : Type par défaut = PASSENGER. Mais peut être TOW.
+    constructor(startNode, maxCapacity, id, type = 'PASSENGER') {
         this.id = id;
+        this.type = type;
         this.currentNode = startNode;
         this.nextNode = null;
         this.progress = 0;
@@ -724,18 +692,28 @@ class Bus {
         this.wasFused = false;
         this.currentX = startNode.x;
         this.currentY = startNode.y;
-        this.maxCapacity = maxCapacity;
+
+        if (this.type === 'TOW') {
+            this.maxCapacity = 0;
+            this.visualLength = 20;
+            this.basePower = 15;
+        } else {
+            this.maxCapacity = maxCapacity;
+            this.visualLength = 18 + (this.maxCapacity * 2);
+            this.basePower = 8 + (this.maxCapacity * 0.5);
+        }
+
         this.currentPassengers = 0;
-        this.visualLength = 18 + (this.maxCapacity * 2);
         this.missionsToPickup = [];
         this.missionsToDropoff = [];
         this.reservedSeats = 0;
         this.targetNode = null;
         this.battery = 100.0;
-        this.basePower = 8 + (this.maxCapacity * 0.5);
         this.currentKWh = 0.0;
         this.isCharging = false;
-        this.assignedHotspot = null;
+
+        // NOUVEAU : Références de remorquage
+        this.strandedTarget = null;
     }
 
     setDestination(target) {
@@ -747,6 +725,46 @@ class Bus {
     }
 
     updateTarget() {
+        // --- LOGIQUE REMORQUEUSE (TOW) ---
+        if (this.type === 'TOW') {
+            if (this.state === 'IDLE' || this.state === 'RETURNING') {
+                let target = buses.find(b => b.state === 'STRANDED' && !buses.some(tow => tow.strandedTarget === b));
+                if (target) {
+                    this.strandedTarget = target;
+                    this.state = 'GOING_TO_RESCUE';
+                    this.targetNode = target.currentNode;
+                    this.setDestination(this.targetNode);
+                    logAction(`🚑 Remorqueuse #${this.id} envoyée pour secourir le Mod. #${target.id}.`);
+                } else {
+                    this.targetNode = depotNode;
+                    if (this.currentNode !== depotNode) this.state = 'RETURNING'; else this.state = 'IDLE';
+                }
+            } else if (this.state === 'GOING_TO_RESCUE') {
+                if (this.currentNode === this.strandedTarget.currentNode) {
+                    // CONNEXION !
+                    this.state = 'TOWING_BACK';
+                    this.targetNode = depotNode;
+                    this.setDestination(depotNode);
+
+                    this.strandedTarget.state = 'TOWED';
+                    this.strandedTarget.targetNode = depotNode;
+                    this.strandedTarget.path = [...this.path]; // Le bus mort copie le chemin
+                    if (this.path.length > 0) this.strandedTarget.nextNode = this.path[0];
+                    this.strandedTarget.progress = max(0, this.progress - 0.2); // Offset pour faire un convoi propre
+                    this.strandedTarget.speed = this.speed; // Le bus mort roule grâce à la remorqueuse !
+
+                    logAction(`🔗 Remorqueuse #${this.id} tracte le Mod. #${this.strandedTarget.id} au dépôt.`);
+                } else {
+                    if (this.targetNode !== this.strandedTarget.currentNode) {
+                        this.targetNode = this.strandedTarget.currentNode;
+                        this.setDestination(this.targetNode);
+                    }
+                }
+            }
+            return;
+        }
+
+        // --- LOGIQUE NORMALE ---
         let nearestNode = null;
         let recordDist = Infinity;
         for (let sm of this.missionsToPickup) {
@@ -765,71 +783,26 @@ class Bus {
         }
 
         if (nearestNode) {
-            this.assignedHotspot = null;
             if (this.targetNode !== nearestNode) {
                 this.targetNode = nearestNode;
                 this.setDestination(this.targetNode);
             }
         } else {
-            let isNetworkClosed = isAutoMode && (clockMins >= 120 && clockMins < 300);
-            if (this.battery <= 25 || isNetworkClosed || this.isCharging) {
-                this.targetNode = depotNode;
-                this.assignedHotspot = null;
-            } else {
-                if (!this.assignedHotspot) {
-                    this.assignedHotspot = random(hotspots);
-                    this.targetNode = this.assignedHotspot.node;
-                    logAction(`📍 Mod. #${this.id} patrouille vers ${this.assignedHotspot.name}.`);
-                }
-            }
-            if (this.targetNode) this.setDestination(this.targetNode);
+            this.targetNode = depotNode;
+            this.setDestination(this.targetNode);
         }
 
         let oldState = this.state;
         if (this.missionsToDropoff.length > 0) this.state = 'CARRYING';
         else if (this.missionsToPickup.length > 0) this.state = 'GOING_TO_PICKUP';
-        else if (this.assignedHotspot && this.currentNode !== this.targetNode) this.state = 'PREPOSITIONING';
         else if (this.targetNode === depotNode && this.currentNode !== depotNode) this.state = 'RETURNING';
         else this.state = 'IDLE';
-
-        if (oldState !== 'RETURNING' && this.state === 'RETURNING') logAction(`⚪ Mod. #${this.id} rentre au dépôt.`);
     }
 
     updateMovement() {
         let isNetworkClosed = isAutoMode && (clockMins >= 120 && clockMins < 300);
-        let currentSpeed = this.speed;
 
-        if (this.battery <= 0) {
-            currentSpeed = 0.005;
-            if (this.missionsToPickup.length > 0) {
-                for (let sm of this.missionsToPickup) {
-                    sm.parent.assigned -= sm.count;
-                }
-                this.missionsToPickup = [];
-                logAction(`🆘 Mod. #${this.id} batterie à plat ! Annulation des ramassages, retour tortue.`);
-                this.updateTarget();
-            }
-        } else if (this.battery <= 20 && !this.isCharging) {
-            this.isCharging = true;
-            logAction(`⚠️ Mod. #${this.id} batterie faible. Retour au dépôt forcé !`);
-            this.updateTarget();
-        }
-
-        if (isNetworkClosed && this.missionsToDropoff.length === 0 && this.missionsToPickup.length === 0 && this.battery < 100 && !this.isCharging) {
-            this.isCharging = true;
-            logAction(`🌙 Mod. #${this.id} a fini son service. Verrouillage en charge pour la nuit.`);
-            this.updateTarget();
-        }
-
-        if (isNetworkClosed && this.missionsToPickup.length > 0) {
-            for (let sm of this.missionsToPickup) {
-                sm.parent.assigned -= sm.count;
-            }
-            this.missionsToPickup = [];
-            logAction(`🌙 Mod. #${this.id} annule ses ramassages (Fin de service).`);
-            this.updateTarget();
-        }
-
+        // GESTION ÉNERGÉTIQUE
         if (this.state !== 'IDLE' || this.progress > 0) {
             let oscillation = sin(simTime * 0.05 + this.id) * 2;
             this.currentKWh = this.basePower + oscillation;
@@ -838,7 +811,10 @@ class Bus {
                 totalEnergySaved += eco * 0.005;
                 this.currentKWh -= eco;
             }
-            this.battery -= this.currentKWh * 0.0005;
+
+            if (this.type === 'TOW') this.battery -= this.currentKWh * 0.0001; // Remorque quasi-infinie
+            else this.battery -= this.currentKWh * 0.0005;
+
             if (this.battery < 0) this.battery = 0;
         } else {
             this.currentKWh = 0;
@@ -856,40 +832,115 @@ class Bus {
             }
         }
 
+        // NOUVEAU : LA PANNE SÈCHE !
+        if (this.type === 'PASSENGER' && this.battery <= 0 && !['STRANDED', 'TOWED', 'DYING'].includes(this.state)) {
+            // On vire tous les clients en approche
+            for (let sm of this.missionsToPickup) sm.parent.assigned -= sm.count;
+            this.missionsToPickup = [];
+
+            // Si le bus avait des clients à bord, ils sont évacués !
+            if (this.missionsToDropoff.length > 0) {
+                let trap = this.missionsToDropoff.reduce((s, m) => s + m.count, 0);
+                this.currentPassengers = 0;
+                this.missionsToDropoff = [];
+                logAction(`🚶 Mod. #${this.id} PANNE SÈCHE : Évacuation de ${trap} passagers sur la route.`);
+            }
+
+            if (!this.nextNode) {
+                this.state = 'STRANDED';
+                this.speed = 0;
+                logAction(`❌ Mod. #${this.id} est mort. Besoin d'une remorqueuse.`);
+            } else {
+                this.state = 'DYING';
+                this.speed = 0.005;
+                logAction(`⚠️ Mod. #${this.id} panne sèche ! Roule au pas vers l'intersection...`);
+            }
+        } else if (this.type === 'PASSENGER' && this.battery <= 20 && !this.isCharging && this.state !== 'TOWED') {
+            this.isCharging = true;
+            logAction(`⚠️ Mod. #${this.id} batterie faible. Retour au dépôt forcé !`);
+            this.updateTarget();
+        }
+
+        if (isNetworkClosed && this.missionsToDropoff.length === 0 && this.missionsToPickup.length === 0 && this.battery < 100 && !this.isCharging && !['STRANDED', 'TOWED', 'DYING'].includes(this.state)) {
+            this.isCharging = true;
+            this.updateTarget();
+        }
+        if (isNetworkClosed && this.missionsToPickup.length > 0) {
+            for (let sm of this.missionsToPickup) sm.parent.assigned -= sm.count;
+            this.missionsToPickup = [];
+            this.updateTarget();
+        }
+
+        // MOTEUR PHYSIQUE - BLOQUÉ
+        if (this.state === 'STRANDED') return;
+
+        // MOTEUR PHYSIQUE - AGONIE (Roule vers la prochaine intersection puis s'arrête)
+        if (this.state === 'DYING') {
+            this.progress += this.speed;
+            this.currentX = lerp(this.currentNode.x, this.nextNode.x, this.progress);
+            this.currentY = lerp(this.currentNode.y, this.nextNode.y, this.progress);
+            if (this.progress >= 1) {
+                this.progress = 0;
+                this.currentNode = this.nextNode;
+                this.nextNode = null;
+                this.path = [];
+                this.state = 'STRANDED';
+                this.speed = 0;
+                logAction(`❌ Mod. #${this.id} définitivement immobilisé.`);
+            }
+            return;
+        }
+
+        // MOTEUR PHYSIQUE - REMORQUÉ
+        if (this.state === 'TOWED' && this.currentNode === depotNode && !this.nextNode) {
+            this.state = 'IDLE';
+            this.speed = 0.02;
+            this.isCharging = true;
+            logAction(`✅ Mod. #${this.id} ramené au dépôt. En charge.`);
+            return;
+        }
+
+        // MOTEUR PHYSIQUE - NORMAL
         if (!this.nextNode) {
-            let changed = false;
-            for (let i = this.missionsToDropoff.length - 1; i >= 0; i--) {
-                let sm = this.missionsToDropoff[i];
-                if (this.currentNode === sm.end) {
-                    this.currentPassengers -= sm.count;
-                    sm.parent.inTransit -= sm.count;
-                    this.missionsToDropoff.splice(i, 1);
-                    logAction(`📍 Mod. #${this.id} a déposé ${sm.count} personnes.`);
-                    changed = true;
+            if (this.type === 'PASSENGER') {
+                let changed = false;
+                for (let i = this.missionsToDropoff.length - 1; i >= 0; i--) {
+                    let sm = this.missionsToDropoff[i];
+                    if (this.currentNode === sm.end) {
+                        this.currentPassengers -= sm.count;
+                        sm.parent.inTransit -= sm.count;
+                        this.missionsToDropoff.splice(i, 1);
+                        logAction(`📍 Mod. #${this.id} a déposé ${sm.count} personnes.`);
+                        changed = true;
+                    }
                 }
-            }
-            for (let i = this.missionsToPickup.length - 1; i >= 0; i--) {
-                let sm = this.missionsToPickup[i];
-                if (this.currentNode === sm.start) {
-                    this.currentPassengers += sm.count;
-                    this.reservedSeats -= sm.count;
-                    sm.parent.waiting -= sm.count;
-                    sm.parent.assigned -= sm.count;
-                    sm.parent.inTransit += sm.count;
-                    this.missionsToPickup.splice(i, 1);
-                    this.missionsToDropoff.push(sm);
-                    logAction(`🟢 Mod. #${this.id} a embarqué ${sm.count} personnes.`);
-                    changed = true;
+                for (let i = this.missionsToPickup.length - 1; i >= 0; i--) {
+                    let sm = this.missionsToPickup[i];
+                    if (this.currentNode === sm.start) {
+                        this.currentPassengers += sm.count;
+                        this.reservedSeats -= sm.count;
+                        sm.parent.waiting -= sm.count;
+                        sm.parent.assigned -= sm.count;
+                        sm.parent.inTransit += sm.count;
+                        this.missionsToPickup.splice(i, 1);
+                        this.missionsToDropoff.push(sm);
+                        logAction(`🟢 Mod. #${this.id} a embarqué ${sm.count} personnes.`);
+                        changed = true;
+                    }
                 }
+                missions = missions.filter(m => m.waiting > 0 || m.inTransit > 0);
             }
-            missions = missions.filter(m => m.waiting > 0 || m.inTransit > 0);
+            if (this.type === 'TOW' && this.state === 'TOWING_BACK' && this.currentNode === depotNode) {
+                this.state = 'IDLE';
+                this.strandedTarget = null;
+            }
             this.updateTarget();
             this.currentX = this.currentNode.x;
             this.currentY = this.currentNode.y;
             return;
         }
 
-        this.progress += currentSpeed;
+        this.progress += this.speed;
         this.currentX = lerp(this.currentNode.x, this.nextNode.x, this.progress);
         this.currentY = lerp(this.currentNode.y, this.nextNode.y, this.progress);
         if (this.progress >= 1) {
@@ -940,13 +991,11 @@ class Bus {
                 }
             }
         }
-
         let accel = this.battery <= 0 ? 0.002 : 0.015;
         if (lockProgress !== -1) this.progress = lockProgress; else if (wantsToAccelerate) {
             this.progress += accel;
             if (targetLimit !== undefined && this.progress > targetLimit) this.progress = targetLimit;
         }
-        if (this.wasFused && !this.isFused) logAction(`⛓️ Mod. #${this.id} s'est séparé.`);
     }
 
     showBody() {
@@ -954,7 +1003,7 @@ class Bus {
         let alphaBody = isHighlighted ? 255 : 60;
         let alphaPath = isHighlighted ? 150 : 30;
 
-        if (this.targetNode && this.targetNode !== depotNode && !this.assignedHotspot) {
+        if (this.targetNode && this.targetNode !== depotNode) {
             if (this.state === 'CARRYING') stroke(46, 204, 113, alphaPath); else stroke(52, 152, 219, alphaPath);
             strokeWeight(isHighlighted ? 4 : 2);
             drawingContext.setLineDash([5, 5]);
@@ -977,16 +1026,31 @@ class Bus {
             arc(this.visualLength / 2, 0, 100, 60, -PI / 4, PI / 4);
         }
 
-        if (this.isFused) fill(230, 126, 34, alphaBody);
-        else {
+        // --- APPARENCES MULTIPLES ---
+        if (this.type === 'TOW') {
+            fill(241, 196, 15, alphaBody);
+            rect(0, 0, this.visualLength, 16, 4);
+            fill(0, alphaBody);
+            rect(0, 0, 6, 16); // Remorqueuse jaune et noire
+        } else if (this.state === 'STRANDED' || this.state === 'DYING') {
+            if (simTime % 40 < 20) fill(231, 76, 60, alphaBody); else fill(100, alphaBody); // Feux de détresse (Clignote rouge/gris)
+            rect(0, 0, this.visualLength, 14, 4);
+        } else if (this.state === 'TOWED') {
+            fill(100, alphaBody);
+            rect(0, 0, this.visualLength, 14, 4); // Bus éteint (gris)
+        } else if (this.isFused) {
+            fill(230, 126, 34, alphaBody);
+            rect(0, 0, this.visualLength, 14, 4);
+            fill(255, 255, 255, isHighlighted ? 120 : 30);
+            rect((this.visualLength / 2) - 3, 0, 4, 10, 2);
+        } else {
             if (this.state === 'CARRYING') fill(46, 204, 113, alphaBody);
-            else if (this.state === 'PREPOSITIONING') fill(241, 196, 15, alphaBody);
             else if (this.state === 'RETURNING' || this.state === 'IDLE') fill(149, 165, 166, alphaBody);
             else fill(52, 152, 219, alphaBody);
+            rect(0, 0, this.visualLength, 14, 4);
+            fill(255, 255, 255, isHighlighted ? 120 : 30);
+            rect((this.visualLength / 2) - 3, 0, 4, 10, 2);
         }
-        rect(0, 0, this.visualLength, 14, 4);
-        fill(255, 255, 255, isHighlighted ? 120 : 30);
-        rect((this.visualLength / 2) - 3, 0, 4, 10, 2);
         pop();
     }
 
@@ -994,12 +1058,13 @@ class Bus {
         let displayPass = this.currentPassengers;
         let displayCap = this.maxCapacity;
         let drawText = true;
-        let textStr = `M#${this.id} (${displayPass}/${displayCap})`;
+        let textStr = this.type === 'TOW' ? `🚑 #${this.id}` : `M#${this.id} (${displayPass}/${displayCap})`;
+
         let isHighlighted = (hoveredBusId === null) || (this.id === hoveredBusId) || (this.isFused && this.getConvoy().some(b => b.id === hoveredBusId));
         let alphaBg = isHighlighted ? 180 : 40;
         let alphaText = isHighlighted ? 255 : 80;
 
-        if (this.isFused) {
+        if (this.isFused && this.type !== 'TOW' && this.state !== 'TOWED') {
             let convoy = this.getConvoy();
             displayPass = convoy.reduce((sum, b) => sum + b.currentPassengers, 0);
             displayCap = convoy.reduce((sum, b) => sum + b.maxCapacity, 0);
@@ -1019,6 +1084,82 @@ class Bus {
             textAlign(CENTER, CENTER);
             text(textStr, this.currentX, this.currentY - 18);
             pop();
+        }
+    }
+}
+
+function spawnRandomMission() {
+    let startNode = grid[floor(random(cols))][floor(random(rows))];
+    let endNode = grid[floor(random(cols))][floor(random(rows))];
+    while (endNode === startNode) endNode = grid[floor(random(cols))][floor(random(rows))];
+    let groupSize = floor(random(1, 6));
+    logAction(`📡 Appel : Groupe de ${groupSize} personnes.`);
+    missions.push({start: startNode, end: endNode, total: groupSize, waiting: groupSize, assigned: 0, inTransit: 0});
+}
+
+function dispatchMissions() {
+    let unassigned = missions.reduce((sum, miss) => sum + (miss.waiting - miss.assigned), 0);
+
+    if (unassigned > 0 && isAutoMode) {
+        let activeBuses = buses.filter(b => b.type === 'PASSENGER' && b.state !== 'STRANDED' && b.state !== 'DYING' && !b.isCharging);
+        let totalAvailable = activeBuses.reduce((sum, b) => sum + (b.maxCapacity - b.currentPassengers - b.reservedSeats), 0);
+
+        let isNetworkClosed = (clockMins >= 120 && clockMins < 300);
+        if (totalAvailable < unassigned && !isNetworkClosed) {
+            let cap = MODULE_CAPACITIES[MODULE_CAPACITIES.length - 1];
+            for (let c of MODULE_CAPACITIES) {
+                if (c >= unassigned + 2) {
+                    cap = c;
+                    break;
+                }
+            }
+            let bestBus = new Bus(depotNode, cap, nextBusId++);
+            buses.push(bestBus);
+            logAction(`📱 RÉSERVATIONS : Création d'un module de ${cap} places pour la charge.`);
+        }
+    }
+
+    for (let m of missions) {
+        let needed = m.waiting - m.assigned;
+        if (needed > 0) {
+            let bestBus = null;
+            let bestScore = Infinity;
+            for (let bus of buses) {
+                if (bus.type === 'TOW') continue;
+                let available = bus.maxCapacity - bus.currentPassengers - bus.reservedSeats;
+                let isNetworkClosed = isAutoMode && (clockMins >= 120 && clockMins < 300);
+
+                if (available > 0 && !bus.isCharging && bus.battery > 0 && !isNetworkClosed && bus.state !== 'STRANDED' && bus.state !== 'DYING') {
+                    let take = min(needed, available);
+                    let d = heuristic(bus.currentNode, m.start);
+                    let score = d;
+
+                    if (bus.missionsToPickup.length > 0 || bus.missionsToDropoff.length > 0) {
+                        score += 15;
+                        if (bus.targetNode) {
+                            let detour = (heuristic(bus.currentNode, m.start) + heuristic(m.start, bus.targetNode)) - heuristic(bus.currentNode, bus.targetNode);
+                            score += detour * 3;
+                        }
+                    } else if (bus.currentNode === depotNode && bus.state === 'IDLE') {
+                        score += 50;
+                    }
+
+                    if (take < needed) score += 50 + ((needed - take) * 5); else if (take < available) score += (available - take) * 2;
+                    if (score < bestScore) {
+                        bestScore = score;
+                        bestBus = bus;
+                    }
+                }
+            }
+            if (bestBus) {
+                let available = bestBus.maxCapacity - bestBus.currentPassengers - bestBus.reservedSeats;
+                let take = min(needed, available);
+                bestBus.missionsToPickup.push({parent: m, start: m.start, end: m.end, count: take});
+                bestBus.reservedSeats += take;
+                m.assigned += take;
+                bestBus.updateTarget();
+                logAction(`🚀 Mod. #${bestBus.id} dispatché.`);
+            }
         }
     }
 }
